@@ -56,7 +56,10 @@ object ApiConfig {
         var text = input.trim()
         if (text.isEmpty()) return null
         if (!text.startsWith("http://", ignoreCase = true) && !text.startsWith("https://", ignoreCase = true)) {
-            text = "http://$text"
+            // Real servers use https. Plain http only for a laptop or local network address.
+            val host = text.substringBefore('/').substringBefore(':').lowercase()
+            val local = host == "localhost" || host.matches(Regex("""\d{1,3}(\.\d{1,3}){3}""")) || host.endsWith(".local")
+            text = (if (local) "http://" else "https://") + text
         }
         val url = text.toHttpUrlOrNull() ?: return null
         val defaultPort = if (url.isHttps) 443 else 80
@@ -162,6 +165,7 @@ object ApiClient {
                 if (response.isSuccessful) {
                     ApiResult.Ok(json)
                 } else {
+                    if (response.code == 401 && token != null) signOutExpired(token)
                     ApiResult.Failure(errorMessage(response.code, json), response.code)
                 }
             }
@@ -170,10 +174,19 @@ object ApiClient {
         }
     }
 
+    /**
+     * The server no longer accepts this sign-in (it expired, or the password changed).
+     * Signing out sends every screen back to the start instead of showing errors forever.
+     */
+    private suspend fun signOutExpired(token: String) = withContext(Dispatchers.Main) {
+        if (SessionStore.session?.token == token) SessionStore.signOut()
+    }
+
     private fun errorMessage(status: Int, json: JSONObject): String {
         val serverMessage = json.optString("message")
         return when {
             // 502 to 504 come from our own routes, with a message written for the user
+            status == 413 -> "That file is too big. Use a PDF under 4 MB."
             status in 502..504 && serverMessage.isNotBlank() -> serverMessage
             status >= 500 -> "Something went wrong on our side. Please try again."
             serverMessage.isNotBlank() -> serverMessage

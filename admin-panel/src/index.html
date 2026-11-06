@@ -86,6 +86,11 @@
       <!-- Overview -->
       <div class="tab-panel" data-panel="overview" hidden>
         <h1>Overview</h1>
+        <p class="muted">Welcome. Everything in SamaPatra can be run from here.</p>
+        <div class="card" id="checklist-card">
+          <h2>Getting started</h2>
+          <ol class="checklist" id="checklist"></ol>
+        </div>
         <div class="stats" id="stats"></div>
         <p class="muted small-text">Server: <span id="server-pill"></span></p>
       </div>
@@ -96,6 +101,7 @@
           <h1>Teachers</h1>
           <button type="button" id="add-teacher">Add teacher</button>
         </div>
+        <p class="muted small-text">Teachers sign in to the app with their email and the password you give them.</p>
         <div class="table-wrap"><table id="teachers-table"></table></div>
       </div>
 
@@ -115,6 +121,7 @@
           <h1>Students</h1>
           <button type="button" id="add-student">Add student</button>
         </div>
+        <p class="muted small-text">Students sign in to the app with their class code, their name and a 4-digit PIN.</p>
         <div class="filters">
           <input type="search" id="student-search" placeholder="Search by name" aria-label="Search students">
           <select id="student-class-filter" aria-label="Filter by class"></select>
@@ -138,6 +145,7 @@
           <input type="text" id="q-subject" placeholder="Subject" aria-label="Subject">
           <input type="search" id="q-search" placeholder="Search text or chapter" aria-label="Search questions">
         </div>
+        <p class="muted small-text">The question bank is shared by all teachers. Import a past paper PDF to add many questions at once.</p>
         <p class="muted small-text" id="q-count"></p>
         <div class="table-wrap"><table id="questions-table"></table></div>
       </div>

@@ -64,7 +64,9 @@ export class RateLimiter {
       const task = this.queue.shift();
       if (task) {
         this.requestsThisMinute++;
-        await task();
+        // Start it and move on: the limit is on how many start per minute, not one at a time.
+        // (Awaiting here made every AI call wait for the one before, e.g. behind a long PDF import.)
+        void task();
       }
     }
 

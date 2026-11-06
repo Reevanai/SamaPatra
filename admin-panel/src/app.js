@@ -11,6 +11,7 @@
     ['assertion_reason', 'Assertion–reason'],
     ['case_study', 'Case study'],
   ];
+  const LEVELS = [['1', '1 · Very easy'], ['2', '2 · Easy'], ['3', '3 · Medium'], ['4', '4 · Hard'], ['5', '5 · Very hard']];
   const LANGUAGES = [['en', 'English'], ['hi', 'Hindi'], ['kn', 'Kannada']];
   const NEEDS = [
     ['none', 'None'],
@@ -183,6 +184,8 @@
 
   function switchTab(name) {
     if (!LOADERS[name]) name = 'overview';
+    if (currentTab === 'ai' && name !== 'ai' && Object.keys(aiPending()).length
+      && !confirm('You have unsaved AI settings. Leave without saving?')) return;
     currentTab = name;
     prefs.set('sp_admin_tab', name);
     $$('[data-tab]').forEach((b) => b.setAttribute('aria-selected', String(b.dataset.tab === name)));
@@ -290,6 +293,10 @@
   }
 
   // ---------- tables ----------
+  function showLoading(table) {
+    if (!table.querySelector('tbody')) table.replaceChildren(el('tbody', {}, el('tr', {}, el('td', { class: 'empty' }, 'Loading…'))));
+  }
+
   function renderTable(table, columns, rows, emptyText) {
     table.replaceChildren(
       el('thead', {}, el('tr', {}, columns.map((c) => el('th', { class: c.class }, c.label)))),
@@ -303,7 +310,22 @@
 
   // ---------- overview ----------
   async function loadOverview() {
-    const s = await api('/admin/overview');
+    const [s, ai] = await Promise.all([api('/admin/overview'), api('/admin/ai-settings')]);
+    const aiReady = Boolean(ai[ai.pdfProvider]?.apiKey && ai[ai.textProvider]?.apiKey);
+    const steps = [
+      [aiReady, 'Add your AI keys', 'Needed for importing papers, translation and grading.', 'ai'],
+      [s.teachers > 0, 'Add your teachers', 'Each gets a password to sign in to the app.', 'teachers'],
+      [s.classes > 0, 'Create classes', 'Each class gets a code that students use to sign in.', 'classes'],
+      [s.students > 0, 'Add students', 'Each student gets a 4-digit PIN.', 'students'],
+      [s.questions > 0, 'Fill the question bank', 'Import a past paper PDF, or add questions by hand.', 'questions'],
+    ];
+    const done = steps.filter(([ok]) => ok).length;
+    $('#checklist-card').hidden = done === steps.length;
+    $('#checklist').replaceChildren(...steps.map(([ok, title, hint, tab]) =>
+      el('li', { class: ok ? 'done' : '' },
+        el('span', { class: 'tick', 'aria-hidden': 'true' }, ok ? '✓' : ''),
+        el('span', { class: 'step-text' }, el('strong', {}, title), el('small', {}, ok ? 'Done' : hint)),
+        ok ? null : el('button', { type: 'button', class: 'secondary small', onclick: () => switchTab(tab) }, 'Go'))));
     const items = [
       ['Teachers', s.teachers, 'teachers'], ['Classes', s.classes, 'classes'], ['Students', s.students, 'students'],
       ['Questions', s.questions, 'questions'], ['Exam papers', s.papers, null],
@@ -315,6 +337,7 @@
 
   // ---------- teachers ----------
   async function loadTeachers() {
+    showLoading($('#teachers-table'));
     cache.teachers = await api('/admin/teachers');
     renderTable($('#teachers-table'), [
       { label: 'Name', render: (t) => t.name },
@@ -363,6 +386,7 @@
 
   // ---------- classes ----------
   async function loadClasses() {
+    showLoading($('#classes-table'));
     const [classes, teachers] = await Promise.all([api('/admin/classes'), api('/admin/teachers')]);
     cache.classes = classes;
     cache.teachers = teachers;
@@ -371,7 +395,10 @@
       { label: 'Grade', class: 'num', render: (c) => c.grade },
       { label: 'Subject', render: (c) => c.subject },
       { label: 'Teacher', render: (c) => c.teacher_name },
-      { label: 'Class code', render: (c) => el('code', {}, c.join_code || '—') },
+      { label: 'Class code', render: (c) => c.join_code
+        ? el('span', { class: 'code-cell' }, el('code', {}, c.join_code),
+            el('button', { type: 'button', class: 'ghost tiny', title: 'Copy class code', onclick: () => copy(c.join_code) }, 'Copy'))
+        : '—' },
       { label: 'Students', class: 'num', render: (c) => c.student_count },
       { label: '', class: 'actions-col', render: (c) => rowActions(
         actionBtn('Students', () => { pendingClassFilter = c.id; switchTab('students'); }),
@@ -419,6 +446,7 @@
 
   // ---------- students ----------
   async function loadStudents() {
+    showLoading($('#students-table'));
     const [students, classes] = await Promise.all([api('/admin/students'), api('/admin/classes')]);
     cache.students = students;
     cache.classes = classes;
@@ -486,7 +514,10 @@
       onSubmit: async (v) => {
         const r = await api('/admin/students', { method: 'POST', body: studentBody(v) });
         loadStudents();
-        showSecret('Student added', `${r.name} signs in with the class code and this PIN. It is shown only once.`, r.pin);
+        const codes = cache.classes.filter((c) => v.classIds.includes(c.id)).map((c) => `${c.name}: ${c.join_code}`);
+        showSecret('Student added',
+          `${r.name} signs in with ${codes.length ? `class code ${codes.join(', ')}` : 'their class code (add them to a class first)'} and this PIN. Write it down now: it is shown only once.`,
+          r.pin);
       },
     });
   });
@@ -513,6 +544,7 @@
 
   // ---------- questions ----------
   async function loadQuestions() {
+    showLoading($('#questions-table'));
     const params = new URLSearchParams();
     if ($('#q-grade').value) params.set('grade', $('#q-grade').value);
     if ($('#q-subject').value.trim()) params.set('subject', $('#q-subject').value.trim());
@@ -551,7 +583,7 @@
       { name: 'grade', label: 'Grade', type: 'select', options: [['9', 'Grade 9'], ['10', 'Grade 10']], value: x.grade ?? 10 },
       { name: 'subject', label: 'Subject', value: x.subject || $('#q-subject').value.trim(), required: true },
       { name: 'chapter', label: 'Chapter', value: x.chapter, required: true },
-      { name: 'difficulty', label: 'Difficulty (1 easy – 5 hard)', type: 'number', min: 1, max: 5, step: 1, value: x.difficulty ?? 3 },
+      { name: 'difficulty', label: 'Difficulty', type: 'select', options: LEVELS, value: x.difficulty ?? 3 },
       { name: 'marks', label: 'Marks', type: 'number', min: 0.5, max: 100, step: 0.5, value: x.marks !== undefined ? Number(x.marks) : 1 },
       { name: 'text', label: 'Question', type: 'textarea', rows: 5, value: c.text, required: true },
       { name: 'options', label: 'Options (multiple choice only, one per line)', type: 'textarea', rows: 4,

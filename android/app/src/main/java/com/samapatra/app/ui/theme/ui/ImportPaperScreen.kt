@@ -51,7 +51,8 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
 
-private const val MAX_PDF_BYTES = 10 * 1024 * 1024
+// The server (Vercel) accepts uploads up to 4.5 MB, including the form around the file
+private const val MAX_PDF_BYTES = 4 * 1024 * 1024
 private const val LETTERS = "ABCDEFGH"
 
 // ---------------------------------------------------------------------------
@@ -177,7 +178,7 @@ fun ImportPaperScreen(onBack: () -> Unit, onSignOut: () -> Unit) {
 
             val bytes = withContext(Dispatchers.IO) { readCapped(context, uri, MAX_PDF_BYTES) }
             if (bytes == null) {
-                error = "Couldn’t read that file. PDFs up to 10 MB work."
+                error = "Couldn’t read that file, or it is over 4 MB. Use a smaller PDF."
                 stage = Stage.Setup
                 return@launch
             }
