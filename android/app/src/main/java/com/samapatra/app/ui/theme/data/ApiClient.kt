@@ -16,8 +16,11 @@ import java.util.concurrent.TimeUnit
 
 /** Where the app finds the server. An admin can change it from inside the app. */
 object ApiConfig {
-    /** Used until an admin sets another address. The Android emulator reaches your laptop at 10.0.2.2. */
-    const val DEFAULT_URL = "http://10.0.2.2:3000"
+    /**
+     * Used until an admin sets another address in the app.
+     * For a server on your laptop, an Android emulator reaches it at http://10.0.2.2:3000.
+     */
+    const val DEFAULT_URL = "https://samapatra-api.vercel.app"
 
     private const val PREFS = "samapatra_server"
     private const val KEY_URL = "base_url"
