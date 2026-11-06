@@ -180,9 +180,19 @@ CREATE TABLE IF NOT EXISTS app_settings (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Wrong-password lockouts (shared by every server instance)
+CREATE TABLE IF NOT EXISTS login_attempts (
+    key VARCHAR(320) PRIMARY KEY,
+    failures INTEGER NOT NULL DEFAULT 0,
+    locked_until TIMESTAMP WITH TIME ZONE,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+SET search_path = public
+AS $$
 BEGIN
     NEW.updated_at = CURRENT_TIMESTAMP;
     RETURN NEW;
@@ -202,3 +212,19 @@ CREATE TRIGGER update_students_updated_at BEFORE UPDATE ON students
 CREATE TRIGGER update_questions_updated_at BEFORE UPDATE ON questions
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 ALTER TABLE classes ADD COLUMN IF NOT EXISTS join_code VARCHAR(8) UNIQUE;
+
+-- Only the backend talks to the database. On Supabase, turning on row level security with
+-- no policies blocks the public REST API from every table, while the backend (which
+-- connects as the database owner) is not affected.
+ALTER TABLE users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE classes ENABLE ROW LEVEL SECURITY;
+ALTER TABLE students ENABLE ROW LEVEL SECURITY;
+ALTER TABLE class_enrollments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE questions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE question_versions ENABLE ROW LEVEL SECURITY;
+ALTER TABLE papers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE answers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE adaptive_test_results ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_cache ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE login_attempts ENABLE ROW LEVEL SECURITY;
