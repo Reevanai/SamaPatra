@@ -1,4 +1,4 @@
-import { createGeminiProvider } from './ai/gemini.js';
+import { createSarvamProvider } from './ai/sarvam.js';
 
 const TYPES = ['mcq', 'short_answer', 'long_answer', 'assertion_reason', 'case_study'] as const;
 type QuestionType = (typeof TYPES)[number];
@@ -54,7 +54,7 @@ const SCHEMA = {
   },
 };
 
-const SYSTEM_PROMPT = `You are an experienced CBSE examiner reading an official question paper PDF.
+const SYSTEM_PROMPT = `You are an experienced CBSE examiner reading the text of an official question paper PDF.
 You extract questions exactly as printed, so teachers can build a question bank.
 Return ONLY a JSON array.`;
 
@@ -230,12 +230,12 @@ export async function importPaperFromPdf(
   grade: number,
   subject: string
 ): Promise<ImportResult> {
-  const provider = createGeminiProvider();
+  const provider = createSarvamProvider();
   const raw = await provider.generateStructuredFromPdf<unknown>(
     pdf,
     buildPrompt(grade, subject),
     SCHEMA,
-    { systemPrompt: SYSTEM_PROMPT, temperature: 0.2, maxTokens: 32768 }
+    { systemPrompt: SYSTEM_PROMPT, temperature: 0.2, maxTokens: 16384 }
   );
   return normalize(raw, grade, subject);
 }

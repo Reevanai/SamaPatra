@@ -1,5 +1,5 @@
 import type { AIProvider } from './types.js';
-import { createAIProvider } from './gemini.js';
+import { createAIProvider, AI_PROVIDER_NAME, currentModelName } from './sarvam.js';
 import { aiCache } from './cache.js';
 
 // Main AI service that uses the provider and cache
@@ -34,8 +34,8 @@ export class AIService {
       await aiCache.set(
         prompt,
         response,
-        'gemini',
-        process.env.GOOGLE_AI_MODEL || 'gemini-2.0-flash-exp',
+        AI_PROVIDER_NAME,
+        currentModelName(),
         options?.cacheContext
       );
     }
@@ -68,8 +68,8 @@ export class AIService {
       await aiCache.set(
         prompt,
         response,
-        'gemini',
-        process.env.GOOGLE_AI_MODEL || 'gemini-2.0-flash-exp',
+        AI_PROVIDER_NAME,
+        currentModelName(),
         options?.cacheContext
       );
     }

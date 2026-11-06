@@ -8,7 +8,7 @@ Backend API for SamaPatra - an inclusive exam platform for students with diverse
 - **Framework**: Fastify
 - **Language**: TypeScript
 - **Database**: PostgreSQL 14+
-- **AI Provider**: Google Gemini API
+- **AI Provider**: Sarvam AI
 
 ## Features
 
@@ -27,7 +27,7 @@ Backend API for SamaPatra - an inclusive exam platform for students with diverse
 
 - Node.js 20 or higher
 - PostgreSQL 14 or higher
-- Google Gemini API key
+- Sarvam AI API key
 
 ### Installation
 
@@ -49,8 +49,9 @@ Backend API for SamaPatra - an inclusive exam platform for students with diverse
    
    Edit `.env` and configure:
    - `DATABASE_URL` - PostgreSQL connection string
-   - `GOOGLE_AI_API_KEY` - Your Gemini API key (get from https://ai.google.dev/)
-   - `GOOGLE_AI_MODEL` - Model name (default: `gemini-2.0-flash-exp`)
+   - `SARVAM_API_KEY` - Your Sarvam AI API key (get from https://dashboard.sarvam.ai/)
+   - `SARVAM_MODEL` - Model name (default: `sarvam-m`)
+   - `SARVAM_FALLBACK_MODEL` - Optional backup model used when the main one is busy
    - Other settings as needed
 
 5. Create the database:
@@ -165,9 +166,9 @@ interface AIProvider {
 }
 ```
 
-Current implementation uses Google Gemini API. To add a new provider:
+Current implementation uses the Sarvam AI chat completions API. To add a new provider:
 1. Implement the `AIProvider` interface
-2. Update `createAIProvider()` in `src/services/ai/gemini.ts`
+2. Update `createAIProvider()` in `src/services/ai/sarvam.ts`
 
 ## Security
 

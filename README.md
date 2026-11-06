@@ -7,7 +7,7 @@ IF your interested in trying out the app, follow the given instructions.
 4. Click build in the top menu of Andoid Studio and click build APK
 5. That's it there is your apk
 
-NOTE: Please add your gemini api key in .env 
+NOTE: Please add your Sarvam AI API key (SARVAM_API_KEY) in .env 
 Also the frontend recieves the server address from localhost by default.
 If you are running the backend server elsewhere (like a VPS), please redirect the addrss in data/ApiClient.kt
 (    const val BASE_URL = "http://localhost:3000") change the address to your desired one.
