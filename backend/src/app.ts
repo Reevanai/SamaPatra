@@ -18,6 +18,7 @@ import studentRoutes from './routes/students.js';
 import classRoutes from './routes/classes.js';
 import bankRoutes from './routes/bank.js';
 import adminRoutes, { adminSettingsRoutes } from './routes/admin.js';
+import adminManageRoutes from './routes/adminManage.js';
 
 /** Builds the API. Used by server.ts (normal server) and api/index.ts (Vercel). */
 export async function buildApp(): Promise<FastifyInstance> {
@@ -95,6 +96,7 @@ export async function buildApp(): Promise<FastifyInstance> {
       await app.register(async (adminApp) => {
         adminApp.addHook('onRequest', requireRole('admin'));
         await adminApp.register(adminSettingsRoutes);
+      await adminApp.register(adminManageRoutes);
       });
     },
     { prefix: '/api' }

@@ -1,6 +1,12 @@
 # SamaPatra Admin Panel
 
-A small, dependency-free web app for admins to manage the backend's AI settings:
+A small, dependency-free web app for running SamaPatra:
+
+- **Teachers**: add, edit, reset passwords, remove
+- **Classes**: add, edit, see class codes, remove
+- **Students**: add (PIN shown once), edit supports and classes, new PIN, remove
+- **Questions**: add, edit, delete, and import a question paper PDF (review before saving)
+- **AI settings**:
 
 - Add or change the **Sarvam AI** and **Google Gemini** API keys
 - Pick the model (and backup model) for each
@@ -13,8 +19,9 @@ Keys are sent to the backend over HTTPS, stored encrypted there, and only ever s
 
 On the backend:
 
-1. Create an admin account: `cd backend && npm run create-admin -- you@example.com "Your Name"`
-2. Set `SETTINGS_ENCRYPTION_KEY` (`openssl rand -hex 32`) in the backend's `.env`.
+1. Set `ADMIN_RECOVERY_CODE` and `SETTINGS_ENCRYPTION_KEY` (`openssl rand -hex 32`) on the backend.
+2. Open the panel, choose **Forgot password, or first time here?**, and enter the recovery code.
+   You get the admin password (24 random letters), shown once.
 3. After deploying the panel, add its URL to the backend's `CORS_ORIGIN`
    (for example `CORS_ORIGIN=https://samapatra-admin.vercel.app`) and restart the backend.
 
@@ -36,7 +43,8 @@ Then open http://localhost:5173.
 
 ## Security notes
 
-- Only `admin` accounts can sign in; 5 wrong passwords lock sign-in for 15 minutes.
+- Password-only sign-in with a random 24-letter password; change it any time, or reset it with the
+  recovery code. Either way, older sessions end. 5 wrong tries lock sign-in for 15 minutes.
 - Sessions last 1 hour and end after 15 minutes without activity or when the tab is closed.
 - Strict Content Security Policy: the page can only run its own scripts and only talk to your backend.
 - The panel cannot be embedded in other sites, is not indexed by search engines, and is never cached.

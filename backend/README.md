@@ -178,24 +178,24 @@ Two providers are built in: Sarvam AI (`sarvam.ts`) and Google Gemini (`gemini.t
 The `admin-panel/` folder (repo root) is a small web app for changing the Sarvam and Gemini
 API keys, models, and which AI does what, without touching the server.
 
-1. Create an admin account. Either set `ADMIN_SETUP_CODE` and use the panel's first-time
-   setup screen (works only while no admin exists), or run this (asks for a 12+ character password):
-   ```bash
-   npm run create-admin -- you@example.com "Your Name"
-   ```
-   Run it again with the same email to reset the password.
+1. Set `ADMIN_RECOVERY_CODE` (any long random string). In the panel, choose
+   **Forgot password, or first time here?** and enter it: you get the admin password,
+   a random 24-letter string shown once. Or run `npm run create-admin` in a terminal.
 2. Deploy `admin-panel/` (see its README) and add its URL to `CORS_ORIGIN`.
 
 How it is protected:
-- Only `admin` accounts can sign in (`POST /api/auth/admin/login`). Teachers and students get 403.
-- 5 wrong passwords per email or per IP lock sign-in for 15 minutes.
+- Sign-in is with the admin password only (`POST /api/auth/admin/login`). Teachers and students get 403 on admin routes.
+- The password is a random 24-letter string. Change it in the panel, or reset it with the recovery
+  code (`POST /api/auth/admin/recover`). Either way, every older admin session ends.
+- 5 wrong tries from one network address lock sign-in and recovery for 15 minutes.
 - Admin sessions last 1 hour; the panel also signs out after 15 minutes without activity.
 - Keys are encrypted (AES-256-GCM) before they are stored in the `app_settings` table, and
   are never sent back in full, only as `sk_a••••1234`.
 - Every change records who made it and when; sign-ins and changes are logged.
 
-Admin API (all need an admin token): `GET /api/admin/ai-settings`, `PUT /api/admin/ai-settings`,
-`POST /api/admin/ai-settings/test`.
+Admin API (all need an admin token): AI settings (`/api/admin/ai-settings`), teachers
+(`/api/admin/teachers`), classes (`/api/admin/classes`), students (`/api/admin/students`),
+`/api/admin/overview` and `/api/admin/password`. Questions use the regular `/api/questions` routes.
 
 ## Deploying on Vercel
 

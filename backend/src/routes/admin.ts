@@ -1,8 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
-import { hashSecret, verifySecret } from '../auth/passwords.js';
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { verifySecret } from '../auth/passwords.js';
+import {
+  findAdminByPassword,
+  issueNewAdminPassword,
+  passwordVersion,
+  recoveryCode,
+  safeEqual,
+} from '../auth/adminPassword.js';
 import { clearFailures, recordFailure, secondsLocked } from '../auth/lockout.js';
 import {
   describeStored,
@@ -15,37 +21,18 @@ import {
 import { buildProvider } from '../services/ai/providers.js';
 import { maskSecret } from '../support/secretBox.js';
 
-// Admin sign-in is stricter than teacher sign-in: 5 wrong tries per email OR per IP
-// locks for 15 minutes. Stored in the database, so it holds on serverless hosts too.
+// 5 wrong tries from one network address lock admin sign-in (and recovery) there for
+// 15 minutes. Stored in the database, so it holds on serverless hosts too.
 const ADMIN_LOCKOUT = { maxTries: 5, lockMs: 15 * 60 * 1000 };
 const ADMIN_TOKEN_TTL = '1h';
 
-// Used when the email does not exist, so a wrong email takes as long as a wrong password.
-const DUMMY_HASH =
-  'scrypt$00000000000000000000000000000000$' + '0'.repeat(128);
+const LoginSchema = z.object({ password: z.string().trim().min(1).max(128) }).strict();
+const RecoverSchema = z.object({ recoveryCode: z.string().trim().min(1).max(200) }).strict();
+const ChangeSchema = z.object({ currentPassword: z.string().trim().min(1).max(128) }).strict();
 
-const SetupSchema = z.object({
-  setupCode: z.string().min(1).max(200),
-  name: z.string().trim().min(2).max(100),
-  email: z.string().trim().toLowerCase().email().max(255),
-  password: z.string().min(12).max(128),
-});
-
-function safeEqual(a: string, b: string): boolean {
-  const ha = createHash('sha256').update(a).digest();
-  const hb = createHash('sha256').update(b).digest();
-  return timingSafeEqual(ha, hb);
+function lockedMessage(seconds: number) {
+  return { error: 'Too many tries', message: `Too many wrong tries. Try again in ${Math.ceil(seconds / 60)} minutes.` };
 }
-
-async function adminExists(): Promise<boolean> {
-  const result = await query(`SELECT 1 FROM users WHERE role = 'admin' LIMIT 1`);
-  return result.rows.length > 0;
-}
-
-const LoginSchema = z.object({
-  email: z.string().trim().toLowerCase().email().max(255),
-  password: z.string().min(1).max(128),
-});
 
 const provider = z.enum(['sarvam', 'gemini']);
 const modelName = z.string().trim().min(1).max(100).regex(/^[A-Za-z0-9._:\/-]+$/, 'Invalid model name');
@@ -95,88 +82,65 @@ async function publicView() {
 }
 
 export default async function adminRoutes(fastify: FastifyInstance) {
-  // Public: is first-time setup still open? (Only before any admin exists.)
-  fastify.get('/auth/admin/setup', async () => ({
-    open: Boolean(process.env.ADMIN_SETUP_CODE) && !(await adminExists()),
-  }));
+  const signToken = (id: string, passwordHash: string) =>
+    fastify.jwt.sign({ sub: id, role: 'admin', pwv: passwordVersion(passwordHash) }, { expiresIn: ADMIN_TOKEN_TTL });
 
-  // Public: create the FIRST admin with ADMIN_SETUP_CODE. Closed for good once an admin exists.
-  fastify.post('/auth/admin/setup', async (request, reply) => {
-    const ipKey = `admin-setup-ip:${request.ip}`;
+  // Public: admin sign-in with the admin password only
+  fastify.post('/auth/admin/login', async (request, reply) => {
+    const ipKey = `admin-ip:${request.ip}`;
     const wait = await secondsLocked(ipKey);
     if (wait > 0) {
       reply.code(429);
-      return { error: 'Too many tries', message: `Too many wrong tries. Try again in ${Math.ceil(wait / 60)} minutes.` };
+      return lockedMessage(wait);
     }
-    const parsed = SetupSchema.safeParse(request.body);
-    if (!parsed.success) {
-      reply.code(400);
-      return { error: 'Invalid request', message: 'Fill in every field. The password needs at least 12 characters.' };
-    }
-    const expected = process.env.ADMIN_SETUP_CODE;
-    if (!expected || (await adminExists())) {
-      reply.code(403);
-      return { error: 'Setup closed', message: 'An admin already exists. Sign in instead.' };
-    }
-    const { setupCode, name, email, password } = parsed.data;
-    if (!safeEqual(setupCode, expected)) {
-      await recordFailure(ipKey, ADMIN_LOCKOUT);
-      reply.code(403);
-      return { error: 'Wrong code', message: 'That setup code is not right.' };
-    }
-    const taken = await query('SELECT 1 FROM users WHERE email = $1', [email]);
-    if (taken.rows.length > 0) {
-      reply.code(409);
-      return { error: 'Email in use', message: 'That email already belongs to another account. Use a different one.' };
-    }
-    const result = await query<{ id: string }>(
-      `INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, 'admin') RETURNING id`,
-      [email, await hashSecret(password), name]
-    );
-    const id = result.rows[0].id;
-    request.log.warn({ adminId: id, ip: request.ip }, 'First admin created through setup');
-    const token = fastify.jwt.sign({ sub: id, role: 'admin' }, { expiresIn: ADMIN_TOKEN_TTL });
-    reply.code(201);
-    return { token, expiresIn: 3600, user: { id, name, email, role: 'admin' } };
-  });
-
-  // Public: admin sign-in
-  fastify.post('/auth/admin/login', async (request, reply) => {
     const parsed = LoginSchema.safeParse(request.body);
     if (!parsed.success) {
       reply.code(400);
-      return { error: 'Invalid request', message: 'Enter your email and password.' };
+      return { error: 'Invalid request', message: 'Enter the admin password.' };
     }
-    const { email, password } = parsed.data;
-    const emailKey = `admin:${email}`;
-    const ipKey = `admin-ip:${request.ip}`;
-    const wait = Math.max(await secondsLocked(emailKey), await secondsLocked(ipKey));
+    const admin = await findAdminByPassword(parsed.data.password);
+    if (!admin) {
+      await recordFailure(ipKey, ADMIN_LOCKOUT);
+      request.log.warn({ ip: request.ip }, 'Failed admin sign-in');
+      reply.code(401);
+      return { error: 'Wrong password', message: 'That password is not right.' };
+    }
+    await clearFailures(ipKey);
+    request.log.info({ adminId: admin.id, ip: request.ip }, 'Admin signed in');
+    return { token: signToken(admin.id, admin.password_hash), expiresIn: 3600, user: { id: admin.id, name: admin.name, role: 'admin' } };
+  });
+
+  // Public: forgot the password (or first-time setup). The recovery code from the server
+  // settings gives the admin a new random password, shown once. Old sessions stop working.
+  fastify.post('/auth/admin/recover', async (request, reply) => {
+    const ipKey = `admin-recover-ip:${request.ip}`;
+    const wait = await secondsLocked(ipKey);
     if (wait > 0) {
       reply.code(429);
-      return {
-        error: 'Too many tries',
-        message: `Too many wrong tries. Try again in ${Math.ceil(wait / 60)} minutes.`,
-      };
+      return lockedMessage(wait);
     }
-
-    const result = await query<{ id: string; name: string; password_hash: string }>(
-      `SELECT id, name, password_hash FROM users WHERE email = $1 AND role = 'admin'`,
-      [email]
-    );
-    const row = result.rows[0];
-    const ok = await verifySecret(password, row?.password_hash ?? DUMMY_HASH);
-    if (!row || !ok) {
-      await recordFailure(emailKey, ADMIN_LOCKOUT);
+    const parsed = RecoverSchema.safeParse(request.body);
+    const expected = recoveryCode();
+    if (!expected) {
+      reply.code(403);
+      return { error: 'Recovery off', message: 'No recovery code is set on the server (ADMIN_RECOVERY_CODE).' };
+    }
+    if (!parsed.success || !safeEqual(parsed.data.recoveryCode, expected)) {
       await recordFailure(ipKey, ADMIN_LOCKOUT);
-      request.log.warn({ email, ip: request.ip }, 'Failed admin sign-in');
-      reply.code(401);
-      return { error: 'Wrong details', message: 'That email or password is not right.' };
+      request.log.warn({ ip: request.ip }, 'Wrong admin recovery code');
+      reply.code(403);
+      return { error: 'Wrong code', message: 'That recovery code is not right.' };
     }
-
-    await clearFailures(emailKey, ipKey);
-    request.log.info({ adminId: row.id, ip: request.ip }, 'Admin signed in');
-    const token = fastify.jwt.sign({ sub: row.id, role: 'admin' }, { expiresIn: ADMIN_TOKEN_TTL });
-    return { token, expiresIn: 3600, user: { id: row.id, name: row.name, email, role: 'admin' } };
+    await clearFailures(ipKey, `admin-ip:${request.ip}`);
+    const result = await issueNewAdminPassword();
+    request.log.warn({ adminId: result.id, ip: request.ip, created: result.created }, 'Admin password reset with recovery code');
+    return {
+      password: result.password,
+      created: result.created,
+      token: signToken(result.id, result.passwordHash),
+      expiresIn: 3600,
+      user: { id: result.id, name: result.name, role: 'admin' },
+    };
   });
 }
 
@@ -187,12 +151,37 @@ export async function adminSettingsRoutes(fastify: FastifyInstance) {
     reply.header('Cache-Control', 'no-store');
   });
 
-  fastify.get('/admin/me', async (request) => {
-    const result = await query<{ name: string; email: string }>(
-      'SELECT name, email FROM users WHERE id = $1',
+  // Change password: confirm the current one, get a new random one (shown once)
+  fastify.post('/admin/password', async (request, reply) => {
+    const parsed = ChangeSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'Invalid request', message: 'Enter your current password.' };
+    }
+    const current = await query<{ password_hash: string }>(
+      'SELECT password_hash FROM users WHERE id = $1',
       [request.user.sub]
     );
-    return { id: request.user.sub, role: request.user.role, ...result.rows[0] };
+    if (!current.rows[0] || !(await verifySecret(parsed.data.currentPassword, current.rows[0].password_hash))) {
+      await recordFailure(`admin-ip:${request.ip}`, ADMIN_LOCKOUT);
+      reply.code(403);
+      return { error: 'Wrong password', message: 'Your current password is not right.' };
+    }
+    const result = await issueNewAdminPassword(request.user.sub);
+    request.log.warn({ adminId: request.user.sub }, 'Admin changed password');
+    return {
+      password: result.password,
+      token: fastify.jwt.sign(
+        { sub: result.id, role: 'admin', pwv: passwordVersion(result.passwordHash) },
+        { expiresIn: ADMIN_TOKEN_TTL }
+      ),
+      expiresIn: 3600,
+    };
+  });
+
+  fastify.get('/admin/me', async (request) => {
+    const result = await query<{ name: string }>('SELECT name FROM users WHERE id = $1', [request.user.sub]);
+    return { id: request.user.sub, role: request.user.role, name: result.rows[0]?.name ?? 'Admin' };
   });
 
   fastify.get('/admin/ai-settings', async () => publicView());
