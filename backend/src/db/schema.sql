@@ -170,6 +170,16 @@ CREATE TABLE ai_cache (
 CREATE INDEX idx_ai_cache_key ON ai_cache(cache_key);
 CREATE INDEX idx_ai_cache_expires ON ai_cache(expires_at);
 
+-- Settings changed from the admin panel (API keys are stored encrypted).
+-- The server also creates this table on first use if it is missing.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value TEXT NOT NULL,
+    is_secret BOOLEAN NOT NULL DEFAULT false,
+    updated_by UUID REFERENCES users(id) ON DELETE SET NULL,
+    updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

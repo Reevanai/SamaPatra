@@ -8,7 +8,7 @@ Backend API for SamaPatra - an inclusive exam platform for students with diverse
 - **Framework**: Fastify
 - **Language**: TypeScript
 - **Database**: PostgreSQL 14+
-- **AI Provider**: Sarvam AI
+- **AI Providers**: Sarvam AI and Google Gemini (switchable from the admin panel)
 
 ## Features
 
@@ -27,7 +27,7 @@ Backend API for SamaPatra - an inclusive exam platform for students with diverse
 
 - Node.js 20 or higher
 - PostgreSQL 14 or higher
-- Sarvam AI API key
+- A Sarvam AI and/or Google Gemini API key
 
 ### Installation
 
@@ -50,8 +50,10 @@ Backend API for SamaPatra - an inclusive exam platform for students with diverse
    Edit `.env` and configure:
    - `DATABASE_URL` - PostgreSQL connection string
    - `SARVAM_API_KEY` - Your Sarvam AI API key (get from https://dashboard.sarvam.ai/)
-   - `SARVAM_MODEL` - Model name (default: `sarvam-m`)
-   - `SARVAM_FALLBACK_MODEL` - Optional backup model used when the main one is busy
+   - `GOOGLE_AI_API_KEY` - Your Gemini API key (get from https://aistudio.google.com/)
+   - `AI_TEXT_PROVIDER` / `AI_PDF_PROVIDER` - `sarvam` or `gemini` (defaults: Sarvam for text, Gemini for PDFs)
+   - `SETTINGS_ENCRYPTION_KEY` - 64 hex characters (`openssl rand -hex 32`), encrypts keys saved from the admin panel
+   - Keys, models and providers can all be changed later from the admin panel (see below)
    - Other settings as needed
 
 5. Create the database:
@@ -166,9 +168,33 @@ interface AIProvider {
 }
 ```
 
-Current implementation uses the Sarvam AI chat completions API. To add a new provider:
+Two providers are built in: Sarvam AI (`sarvam.ts`) and Google Gemini (`gemini.ts`).
+`providers.ts` picks one for text work and one for PDF import, based on the live settings in `config.ts`. To add a new provider:
 1. Implement the `AIProvider` interface
-2. Update `createAIProvider()` in `src/services/ai/sarvam.ts`
+2. Add it to `buildProvider()` in `src/services/ai/providers.ts` and to `ProviderName` in `config.ts`
+
+## Admin panel
+
+The `admin-panel/` folder (repo root) is a small web app for changing the Sarvam and Gemini
+API keys, models, and which AI does what, without touching the server.
+
+1. Create an admin account (you will be asked for a password, 12+ characters):
+   ```bash
+   npm run create-admin -- you@example.com "Your Name"
+   ```
+   Run it again with the same email to reset the password.
+2. Deploy `admin-panel/` (see its README) and add its URL to `CORS_ORIGIN`.
+
+How it is protected:
+- Only `admin` accounts can sign in (`POST /api/auth/admin/login`). Teachers and students get 403.
+- 5 wrong passwords per email or per IP lock sign-in for 15 minutes.
+- Admin sessions last 1 hour; the panel also signs out after 15 minutes without activity.
+- Keys are encrypted (AES-256-GCM) before they are stored in the `app_settings` table, and
+  are never sent back in full, only as `sk_a••••1234`.
+- Every change records who made it and when; sign-ins and changes are logged.
+
+Admin API (all need an admin token): `GET /api/admin/ai-settings`, `PUT /api/admin/ai-settings`,
+`POST /api/admin/ai-settings/test`.
 
 ## Security
 

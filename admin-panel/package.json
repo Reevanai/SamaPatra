@@ -1,0 +1,14 @@
+{
+  "name": "samapatra-admin-panel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Admin panel for SamaPatra: manage Sarvam and Gemini API keys",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "preview": "node build.mjs && npx --yes serve@14.2.4 dist -l 5173"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

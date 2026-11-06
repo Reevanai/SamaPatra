@@ -17,8 +17,12 @@ import gradingRoutes from './routes/grading.js';
 import studentRoutes from './routes/students.js';
 import classRoutes from './routes/classes.js';
 import bankRoutes from './routes/bank.js';
+import adminRoutes, { adminSettingsRoutes } from './routes/admin.js';
 
 const server = Fastify({
+  // Set TRUST_PROXY=true when running behind a proxy (Render, Railway, nginx...) so
+  // sign-in lockouts see the real client IP.
+  trustProxy: process.env.TRUST_PROXY === 'true',
   logger: {
     level: process.env.LOG_LEVEL || 'info',
     transport:
@@ -36,9 +40,15 @@ const server = Fastify({
 });
 
 // Register plugins
+// CORS_ORIGIN can be one origin or a comma-separated list
+// (for example the admin panel's Vercel URL). Default "*" keeps the Android app working.
+const corsOrigins = (process.env.CORS_ORIGIN || '*')
+  .split(',')
+  .map((o) => o.trim())
+  .filter(Boolean);
 await server.register(cors, {
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true,
+  origin: corsOrigins.includes('*') ? '*' : corsOrigins,
+  credentials: !corsOrigins.includes('*'),
 });
 
 await server.register(multipart, {
@@ -55,6 +65,7 @@ await server.register(jwt, { secret: jwtSecret });
 // Register routes
 // Public: sign up and sign in
 await server.register(authRoutes, { prefix: '/api' });
+await server.register(adminRoutes, { prefix: '/api' });
 
 // Everything else needs a signed-in user
 await server.register(
@@ -76,6 +87,12 @@ await server.register(
       await teacherApp.register(rosterRoutes);
       await teacherApp.register(classPapersRoutes);
       await teacherApp.register(bankRoutes);
+    });
+
+    // Admins only: API keys and AI settings
+    await app.register(async (adminApp) => {
+      adminApp.addHook('onRequest', requireRole('admin'));
+      await adminApp.register(adminSettingsRoutes);
     });
   },
   { prefix: '/api' }

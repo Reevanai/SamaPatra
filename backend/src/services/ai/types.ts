@@ -101,3 +101,14 @@ export async function withRetry<T>(
 
   throw lastError!;
 }
+
+/** A provider that can also read a PDF and return JSON (used for question paper import). */
+export interface PdfCapableProvider extends AIProvider {
+  readonly modelName: string;
+  generateStructuredFromPdf<T>(
+    pdf: Buffer,
+    prompt: string,
+    schema: any,
+    options?: GenerateOptions
+  ): Promise<T>;
+}

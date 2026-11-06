@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!--CSP-->
+  <meta name="referrer" content="no-referrer">
+  <meta name="robots" content="noindex, nofollow">
+  <title>SamaPatra Admin</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="config.js"></script>
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="logo" aria-hidden="true">S</span>
+      <span>SamaPatra <strong>Admin</strong></span>
+    </div>
+    <div class="session" id="session" hidden>
+      <span id="who"></span>
+      <span class="timer" id="timer" title="Time left before you are signed out"></span>
+      <button class="ghost" id="signout" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main>
+    <!-- Sign in -->
+    <section id="login-view" class="card narrow" hidden>
+      <h1>Admin sign in</h1>
+      <p class="muted">Only admin accounts can open this panel.</p>
+      <form id="login-form" autocomplete="on">
+        <label id="server-row" hidden>
+          Server address
+          <input id="server" type="url" placeholder="https://api.example.com" inputmode="url" spellcheck="false">
+        </label>
+        <label>
+          Email
+          <input id="email" type="email" autocomplete="username" required>
+        </label>
+        <label>
+          Password
+          <input id="password" type="password" autocomplete="current-password" required>
+        </label>
+        <p class="error" id="login-error" role="alert" hidden></p>
+        <button type="submit" id="login-btn">Sign in</button>
+      </form>
+    </section>
+
+    <!-- Settings -->
+    <section id="settings-view" hidden>
+      <div class="page-head">
+        <div>
+          <h1>AI settings</h1>
+          <p class="muted">Changes apply on the server within a few seconds. No restart needed.</p>
+        </div>
+        <span class="server-pill" id="server-pill"></span>
+      </div>
+
+      <div class="card">
+        <h2>Which AI does what</h2>
+        <div class="grid two">
+          <label>
+            Translation, grading and adapting questions
+            <select id="textProvider">
+              <option value="sarvam">Sarvam AI</option>
+              <option value="gemini">Google Gemini</option>
+            </select>
+            <small class="src" data-src="textProvider"></small>
+          </label>
+          <label>
+            Reading question paper PDFs
+            <select id="pdfProvider">
+              <option value="gemini">Google Gemini (best for PDFs)</option>
+              <option value="sarvam">Sarvam AI</option>
+            </select>
+            <small class="src" data-src="pdfProvider"></small>
+          </label>
+        </div>
+        <p class="hint">Gemini reads the PDF as it looks on the page, so fractions, powers and tables stay correct. Sarvam only gets the PDF's text.</p>
+      </div>
+
+      <div class="grid two">
+        <div class="card provider" data-provider="sarvam">
+          <div class="provider-head">
+            <h2>Sarvam AI</h2>
+            <span class="badge" data-badge="sarvam"></span>
+          </div>
+          <label>
+            API key
+            <div class="key-row">
+              <input data-key="sarvam" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty to keep the current key">
+              <button type="button" class="ghost small" data-reveal="sarvam" aria-label="Show key">Show</button>
+            </div>
+            <small class="current" data-current="sarvam"></small>
+          </label>
+          <label>
+            Model
+            <input id="sarvamModel" type="text" spellcheck="false" list="sarvam-models">
+            <small class="src" data-src="sarvamModel"></small>
+          </label>
+          <label>
+            Backup model <span class="muted">(used when the main one is busy)</span>
+            <input id="sarvamFallbackModel" type="text" spellcheck="false" list="sarvam-models" placeholder="None">
+          </label>
+          <div class="actions">
+            <button type="button" class="secondary" data-test="sarvam">Test connection</button>
+            <button type="button" class="danger ghost" data-clear="sarvam">Remove saved key</button>
+          </div>
+          <p class="test-result" data-result="sarvam" role="status" hidden></p>
+        </div>
+
+        <div class="card provider" data-provider="gemini">
+          <div class="provider-head">
+            <h2>Google Gemini</h2>
+            <span class="badge" data-badge="gemini"></span>
+          </div>
+          <label>
+            API key
+            <div class="key-row">
+              <input data-key="gemini" type="password" autocomplete="off" spellcheck="false" placeholder="Leave empty to keep the current key">
+              <button type="button" class="ghost small" data-reveal="gemini" aria-label="Show key">Show</button>
+            </div>
+            <small class="current" data-current="gemini"></small>
+          </label>
+          <label>
+            Model
+            <input id="geminiModel" type="text" spellcheck="false" list="gemini-models">
+            <small class="src" data-src="geminiModel"></small>
+          </label>
+          <label>
+            Backup model <span class="muted">(used when the main one is busy)</span>
+            <input id="geminiFallbackModel" type="text" spellcheck="false" list="gemini-models" placeholder="None">
+          </label>
+          <div class="actions">
+            <button type="button" class="secondary" data-test="gemini">Test connection</button>
+            <button type="button" class="danger ghost" data-clear="gemini">Remove saved key</button>
+          </div>
+          <p class="test-result" data-result="gemini" role="status" hidden></p>
+        </div>
+      </div>
+
+      <datalist id="sarvam-models">
+        <option value="sarvam-m"></option>
+        <option value="sarvam-30b"></option>
+        <option value="sarvam-105b"></option>
+      </datalist>
+      <datalist id="gemini-models">
+        <option value="gemini-3.5-flash"></option>
+        <option value="gemini-3.1-flash-lite"></option>
+      </datalist>
+
+      <div class="savebar">
+        <p class="status" id="save-status" role="status"></p>
+        <button type="button" class="ghost" id="discard">Discard changes</button>
+        <button type="button" id="save">Save changes</button>
+      </div>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+</body>
+</html>

@@ -1,9 +1,9 @@
 import { extractText, getDocumentProxy } from 'unpdf';
-import type { AIProvider, AIConfig, GenerateOptions } from './types.js';
+import type { PdfCapableProvider, AIConfig, GenerateOptions } from './types.js';
 import { withRetry, RateLimiter } from './types.js';
+import type { AIConfigValues } from './config.js';
 
 const DEFAULT_BASE_URL = 'https://api.sarvam.ai/v1';
-const DEFAULT_MODEL = 'sarvam-m';
 
 // One limiter for every Sarvam call in the app, so the rate limit is shared.
 let sharedLimiter: RateLimiter | undefined;
@@ -60,7 +60,7 @@ interface ChatMessage {
   content: string;
 }
 
-export class SarvamProvider implements AIProvider {
+export class SarvamProvider implements PdfCapableProvider {
   private apiKey: string;
   private baseUrl: string;
   private model: string;
@@ -199,9 +199,9 @@ export class SarvamProvider implements AIProvider {
     const fullPrompt = `${prompt}\n\nThe text extracted from the PDF follows. Layout, tables and symbols may be slightly garbled by the extraction, so read it carefully.\n\n<pdf_text>\n${pdfText}\n</pdf_text>`;
 
     return this.generateStructured<T>(fullPrompt, schema, {
-      temperature: 0.2,
-      maxTokens: 16384,
       ...options,
+      temperature: options?.temperature ?? 0.2,
+      maxTokens: options?.maxTokens ?? 16384,
     });
   }
 
@@ -212,33 +212,18 @@ export class SarvamProvider implements AIProvider {
   }
 }
 
-export function createSarvamProvider(): SarvamProvider {
-  const apiKey = process.env.SARVAM_API_KEY;
-  if (!apiKey) {
-    throw new Error('SARVAM_API_KEY environment variable is required');
+export function createSarvamProvider(config: AIConfigValues): SarvamProvider {
+  if (!config.sarvamApiKey) {
+    throw new Error('No Sarvam API key is set. Add one in the admin panel (or SARVAM_API_KEY in .env).');
   }
-
-  const model = process.env.SARVAM_MODEL || DEFAULT_MODEL;
-  const fallback = (process.env.SARVAM_FALLBACK_MODEL ?? '').trim();
-
   return new SarvamProvider(
     {
-      apiKey,
-      model,
+      apiKey: config.sarvamApiKey,
+      model: config.sarvamModel,
       baseUrl: process.env.SARVAM_BASE_URL,
       maxRetries: parseInt(process.env.AI_RETRY_MAX_ATTEMPTS || '3'),
       retryDelay: parseInt(process.env.AI_RETRY_DELAY_MS || '1000'),
     },
-    fallback === '' || fallback.toLowerCase() === 'none' ? undefined : fallback
+    config.sarvamFallbackModel
   );
-}
-
-// Factory function to create AI provider
-export function createAIProvider(): AIProvider {
-  return createSarvamProvider();
-}
-
-export const AI_PROVIDER_NAME = 'sarvam';
-export function currentModelName(): string {
-  return process.env.SARVAM_MODEL || DEFAULT_MODEL;
 }
