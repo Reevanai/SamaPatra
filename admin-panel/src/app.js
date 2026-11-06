@@ -102,7 +102,20 @@
   );
 
   // ---------- views ----------
+  async function checkSetup() {
+    if (!serverUrl()) return;
+    try {
+      const status = await api('/auth/admin/setup');
+      if (status && status.open && !token) {
+        $('#login-view').hidden = true;
+        $('#setup-view').hidden = false;
+        $('#setup-code').focus();
+      }
+    } catch { /* server unreachable: keep the sign-in screen */ }
+  }
+
   function showLogin(message) {
+    $('#setup-view').hidden = true;
     $('#settings-view').hidden = true;
     $('#session').hidden = true;
     $('#login-view').hidden = false;
@@ -113,9 +126,11 @@
     err.hidden = !message;
     err.textContent = message || '';
     (serverUrl() ? $('#email') : $('#server')).focus();
+    if (!message) checkSetup();
   }
 
   async function showSettings() {
+    $('#setup-view').hidden = true;
     $('#login-view').hidden = true;
     $('#settings-view').hidden = false;
     $('#session').hidden = false;
@@ -308,6 +323,41 @@
     } finally {
       btn.disabled = false;
       btn.textContent = 'Sign in';
+    }
+  });
+
+  $('#setup-form').addEventListener('submit', async (event) => {
+    event.preventDefault();
+    const err = $('#setup-error');
+    const btn = $('#setup-btn');
+    err.hidden = true;
+    if ($('#setup-password').value !== $('#setup-password2').value) {
+      err.hidden = false;
+      err.textContent = 'The passwords do not match.';
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Creating…';
+    try {
+      const result = await api('/auth/admin/setup', {
+        method: 'POST',
+        body: {
+          setupCode: $('#setup-code').value,
+          name: $('#setup-name').value,
+          email: $('#setup-email').value,
+          password: $('#setup-password').value,
+        },
+      });
+      ['#setup-code', '#setup-password', '#setup-password2'].forEach((sel) => { $(sel).value = ''; });
+      setSession(result.token, result.expiresIn || 3600);
+      await showSettings();
+      toast('Admin account created. You are signed in.');
+    } catch (error) {
+      err.hidden = false;
+      err.textContent = error.message;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create admin';
     }
   });
 

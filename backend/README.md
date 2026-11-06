@@ -178,7 +178,8 @@ Two providers are built in: Sarvam AI (`sarvam.ts`) and Google Gemini (`gemini.t
 The `admin-panel/` folder (repo root) is a small web app for changing the Sarvam and Gemini
 API keys, models, and which AI does what, without touching the server.
 
-1. Create an admin account (you will be asked for a password, 12+ characters):
+1. Create an admin account. Either set `ADMIN_SETUP_CODE` and use the panel's first-time
+   setup screen (works only while no admin exists), or run this (asks for a 12+ character password):
    ```bash
    npm run create-admin -- you@example.com "Your Name"
    ```
@@ -195,6 +196,18 @@ How it is protected:
 
 Admin API (all need an admin token): `GET /api/admin/ai-settings`, `PUT /api/admin/ai-settings`,
 `POST /api/admin/ai-settings/test`.
+
+## Deploying on Vercel
+
+The backend runs on Vercel as one serverless function: `npm run build` compiles `src/` to
+`dist/`, and `api/index.js` hands every request to the Fastify app (see `vercel.json`).
+
+- Set the project's **Root Directory** to `backend` and add the environment variables from
+  `.env.example` (at least `DATABASE_URL`, `JWT_SECRET`, `SETTINGS_ENCRYPTION_KEY`, `CORS_ORIGIN`).
+- For Supabase, use the **connection pooler** URL (port 6543), which suits serverless.
+- Turn off Vercel Authentication for this project, or the Android app cannot reach the API.
+- Vercel limits request bodies to 4.5 MB, so PDF uploads must be smaller than that.
+- Sign-in lockouts are stored in the `login_attempts` table, so they work across instances.
 
 ## Security
 

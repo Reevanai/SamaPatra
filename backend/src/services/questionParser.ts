@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { aiService } from './ai/index.js';
-import type { Question, Language } from '../types/schema.js';
+import { Language, type Question } from '../types/schema.js';
 
 export interface ParsedQuestion {
   type: string;

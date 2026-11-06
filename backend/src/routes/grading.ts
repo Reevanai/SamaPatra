@@ -97,7 +97,7 @@ export default async function gradingRoutes(fastify: FastifyInstance) {
         );
         approved.push(answerId);
       } catch (error) {
-        fastify.log.error(`Failed to approve grade for ${answerId}:`, error);
+        fastify.log.error({ err: error, answerId }, "Failed to approve grade");
         failed.push(answerId);
       }
     }

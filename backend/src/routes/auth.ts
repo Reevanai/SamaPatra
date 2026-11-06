@@ -3,28 +3,11 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { z } from 'zod';
 import { query } from '../db/index.js';
 import { hashSecret, verifySecret } from '../auth/passwords.js';
+import { clearFailures, recordFailure, secondsLocked } from '../auth/lockout.js';
 import { effectiveSettings } from '../support/settings.js';
 
-// Five wrong tries locks that account for five minutes (kept in memory).
-const MAX_TRIES = 5;
-const LOCK_MS = 5 * 60 * 1000;
-const failures = new Map<string, { count: number; lockedUntil: number }>();
-
-function secondsLocked(key: string): number {
-  const entry = failures.get(key);
-  if (!entry || entry.lockedUntil <= Date.now()) return 0;
-  return Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-}
-
-function recordFailure(key: string): void {
-  const entry = failures.get(key) ?? { count: 0, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= MAX_TRIES) {
-    entry.lockedUntil = Date.now() + LOCK_MS;
-    entry.count = 0;
-  }
-  failures.set(key, entry);
-}
+// Five wrong tries locks that account for five minutes (stored in the database).
+const LOCKOUT = { maxTries: 5, lockMs: 5 * 60 * 1000 };
 
 function safeEqual(a: string, b: string): boolean {
   const ha = createHash('sha256').update(a).digest();
@@ -106,7 +89,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const { email, password } = parsed.data;
 
     const key = `teacher:${email}`;
-    const wait = secondsLocked(key);
+    const wait = await secondsLocked(key);
     if (wait > 0) {
       reply.code(429);
       return {
@@ -121,12 +104,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
     );
     const row = result.rows[0];
     if (!row || !(await verifySecret(password, row.password_hash))) {
-      recordFailure(key);
+      await recordFailure(key, LOCKOUT);
       reply.code(401);
       return { error: 'Wrong details', message: 'That email or password is not right.' };
     }
 
-    failures.delete(key);
+    await clearFailures(key);
     const token = fastify.jwt.sign({ sub: row.id, role: 'teacher' }, { expiresIn: '24h' });
     return { token, user: { id: row.id, name: row.name, email, role: 'teacher' } };
   });
@@ -170,7 +153,7 @@ export default async function authRoutes(fastify: FastifyInstance) {
     const { classCode, studentId, pin } = parsed.data;
 
     const key = `student:${studentId}`;
-    const wait = secondsLocked(key);
+    const wait = await secondsLocked(key);
     if (wait > 0) {
       reply.code(429);
       return {
@@ -200,12 +183,12 @@ export default async function authRoutes(fastify: FastifyInstance) {
     );
     const row = result.rows[0];
     if (!row || !(await verifySecret(pin, row.password_hash))) {
-      recordFailure(key);
+      await recordFailure(key, LOCKOUT);
       reply.code(401);
       return { error: 'Wrong PIN', message: 'That PIN is not right.' };
     }
 
-    failures.delete(key);
+    await clearFailures(key);
     const token = fastify.jwt.sign(
       { sub: row.user_id, role: 'student', studentId: row.student_id },
       { expiresIn: '24h' }

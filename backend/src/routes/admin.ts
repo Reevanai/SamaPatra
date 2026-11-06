@@ -1,7 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { query } from '../db/index.js';
-import { verifySecret } from '../auth/passwords.js';
+import { hashSecret, verifySecret } from '../auth/passwords.js';
+import { createHash, timingSafeEqual } from 'node:crypto';
+import { clearFailures, recordFailure, secondsLocked } from '../auth/lockout.js';
 import {
   describeStored,
   envConfig,
@@ -14,31 +16,31 @@ import { buildProvider } from '../services/ai/providers.js';
 import { maskSecret } from '../support/secretBox.js';
 
 // Admin sign-in is stricter than teacher sign-in: 5 wrong tries per email OR per IP
-// locks for 15 minutes.
-const MAX_TRIES = 5;
-const LOCK_MS = 15 * 60 * 1000;
+// locks for 15 minutes. Stored in the database, so it holds on serverless hosts too.
+const ADMIN_LOCKOUT = { maxTries: 5, lockMs: 15 * 60 * 1000 };
 const ADMIN_TOKEN_TTL = '1h';
-const failures = new Map<string, { count: number; lockedUntil: number }>();
-
-function secondsLocked(key: string): number {
-  const entry = failures.get(key);
-  if (!entry || entry.lockedUntil <= Date.now()) return 0;
-  return Math.ceil((entry.lockedUntil - Date.now()) / 1000);
-}
-
-function recordFailure(key: string): void {
-  const entry = failures.get(key) ?? { count: 0, lockedUntil: 0 };
-  entry.count += 1;
-  if (entry.count >= MAX_TRIES) {
-    entry.lockedUntil = Date.now() + LOCK_MS;
-    entry.count = 0;
-  }
-  failures.set(key, entry);
-}
 
 // Used when the email does not exist, so a wrong email takes as long as a wrong password.
 const DUMMY_HASH =
   'scrypt$00000000000000000000000000000000$' + '0'.repeat(128);
+
+const SetupSchema = z.object({
+  setupCode: z.string().min(1).max(200),
+  name: z.string().trim().min(2).max(100),
+  email: z.string().trim().toLowerCase().email().max(255),
+  password: z.string().min(12).max(128),
+});
+
+function safeEqual(a: string, b: string): boolean {
+  const ha = createHash('sha256').update(a).digest();
+  const hb = createHash('sha256').update(b).digest();
+  return timingSafeEqual(ha, hb);
+}
+
+async function adminExists(): Promise<boolean> {
+  const result = await query(`SELECT 1 FROM users WHERE role = 'admin' LIMIT 1`);
+  return result.rows.length > 0;
+}
 
 const LoginSchema = z.object({
   email: z.string().trim().toLowerCase().email().max(255),
@@ -93,6 +95,51 @@ async function publicView() {
 }
 
 export default async function adminRoutes(fastify: FastifyInstance) {
+  // Public: is first-time setup still open? (Only before any admin exists.)
+  fastify.get('/auth/admin/setup', async () => ({
+    open: Boolean(process.env.ADMIN_SETUP_CODE) && !(await adminExists()),
+  }));
+
+  // Public: create the FIRST admin with ADMIN_SETUP_CODE. Closed for good once an admin exists.
+  fastify.post('/auth/admin/setup', async (request, reply) => {
+    const ipKey = `admin-setup-ip:${request.ip}`;
+    const wait = await secondsLocked(ipKey);
+    if (wait > 0) {
+      reply.code(429);
+      return { error: 'Too many tries', message: `Too many wrong tries. Try again in ${Math.ceil(wait / 60)} minutes.` };
+    }
+    const parsed = SetupSchema.safeParse(request.body);
+    if (!parsed.success) {
+      reply.code(400);
+      return { error: 'Invalid request', message: 'Fill in every field. The password needs at least 12 characters.' };
+    }
+    const expected = process.env.ADMIN_SETUP_CODE;
+    if (!expected || (await adminExists())) {
+      reply.code(403);
+      return { error: 'Setup closed', message: 'An admin already exists. Sign in instead.' };
+    }
+    const { setupCode, name, email, password } = parsed.data;
+    if (!safeEqual(setupCode, expected)) {
+      await recordFailure(ipKey, ADMIN_LOCKOUT);
+      reply.code(403);
+      return { error: 'Wrong code', message: 'That setup code is not right.' };
+    }
+    const taken = await query('SELECT 1 FROM users WHERE email = $1', [email]);
+    if (taken.rows.length > 0) {
+      reply.code(409);
+      return { error: 'Email in use', message: 'That email already belongs to another account. Use a different one.' };
+    }
+    const result = await query<{ id: string }>(
+      `INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, 'admin') RETURNING id`,
+      [email, await hashSecret(password), name]
+    );
+    const id = result.rows[0].id;
+    request.log.warn({ adminId: id, ip: request.ip }, 'First admin created through setup');
+    const token = fastify.jwt.sign({ sub: id, role: 'admin' }, { expiresIn: ADMIN_TOKEN_TTL });
+    reply.code(201);
+    return { token, expiresIn: 3600, user: { id, name, email, role: 'admin' } };
+  });
+
   // Public: admin sign-in
   fastify.post('/auth/admin/login', async (request, reply) => {
     const parsed = LoginSchema.safeParse(request.body);
@@ -103,7 +150,7 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const { email, password } = parsed.data;
     const emailKey = `admin:${email}`;
     const ipKey = `admin-ip:${request.ip}`;
-    const wait = Math.max(secondsLocked(emailKey), secondsLocked(ipKey));
+    const wait = Math.max(await secondsLocked(emailKey), await secondsLocked(ipKey));
     if (wait > 0) {
       reply.code(429);
       return {
@@ -119,15 +166,14 @@ export default async function adminRoutes(fastify: FastifyInstance) {
     const row = result.rows[0];
     const ok = await verifySecret(password, row?.password_hash ?? DUMMY_HASH);
     if (!row || !ok) {
-      recordFailure(emailKey);
-      recordFailure(ipKey);
+      await recordFailure(emailKey, ADMIN_LOCKOUT);
+      await recordFailure(ipKey, ADMIN_LOCKOUT);
       request.log.warn({ email, ip: request.ip }, 'Failed admin sign-in');
       reply.code(401);
       return { error: 'Wrong details', message: 'That email or password is not right.' };
     }
 
-    failures.delete(emailKey);
-    failures.delete(ipKey);
+    await clearFailures(emailKey, ipKey);
     request.log.info({ adminId: row.id, ip: request.ip }, 'Admin signed in');
     const token = fastify.jwt.sign({ sub: row.id, role: 'admin' }, { expiresIn: ADMIN_TOKEN_TTL });
     return { token, expiresIn: 3600, user: { id: row.id, name: row.name, email, role: 'admin' } };

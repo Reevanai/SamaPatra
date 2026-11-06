@@ -48,6 +48,36 @@
       </form>
     </section>
 
+    <!-- First-time setup (only shown before any admin exists) -->
+    <section id="setup-view" class="card narrow" hidden>
+      <h1>Create the first admin</h1>
+      <p class="muted">No admin account exists yet. Enter the setup code from the server's <code>ADMIN_SETUP_CODE</code> setting. This only works once.</p>
+      <form id="setup-form" autocomplete="on">
+        <label>
+          Setup code
+          <input id="setup-code" type="password" autocomplete="off" spellcheck="false" required>
+        </label>
+        <label>
+          Your name
+          <input id="setup-name" type="text" autocomplete="name" required minlength="2">
+        </label>
+        <label>
+          Email
+          <input id="setup-email" type="email" autocomplete="username" required>
+        </label>
+        <label>
+          Password <span class="muted">(12+ characters)</span>
+          <input id="setup-password" type="password" autocomplete="new-password" required minlength="12">
+        </label>
+        <label>
+          Password again
+          <input id="setup-password2" type="password" autocomplete="new-password" required minlength="12">
+        </label>
+        <p class="error" id="setup-error" role="alert" hidden></p>
+        <button type="submit" id="setup-btn">Create admin</button>
+      </form>
+    </section>
+
     <!-- Settings -->
     <section id="settings-view" hidden>
       <div class="page-head">

@@ -10,4 +10,4 @@ dist/
 .idea/
 coverage/
 .cache/
-API keys/
+API keys/.vercel/
