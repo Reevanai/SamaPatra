@@ -47,6 +47,14 @@ const StudentCreate = z
   })
   .strict();
 const StudentUpdate = StudentCreate.partial().strict();
+const StudentBulk = z
+  .object({
+    names: z.array(z.string().trim().min(2).max(100)).min(1).max(200),
+    grade: Grade,
+    language: z.enum(['en', 'hi', 'kn']),
+    classIds: z.array(z.string().uuid()).max(20).default([]),
+  })
+  .strict();
 
 function bad(reply: FastifyReply, message: string, code = 400) {
   reply.code(code);
@@ -80,8 +88,27 @@ export default async function adminManageRoutes(fastify: FastifyInstance) {
         (SELECT COUNT(*) FROM classes) AS classes,
         (SELECT COUNT(*) FROM questions) AS questions,
         (SELECT COUNT(*) FROM papers) AS papers`);
-    const row = r.rows[0];
-    return Object.fromEntries(Object.entries(row).map(([k, v]) => [k, Number(v)]));
+    const counts = Object.fromEntries(Object.entries(r.rows[0]).map(([k, v]) => [k, Number(v)]));
+    // Small breakdowns for the overview charts
+    const [byType, bySubject, byNeed, byGrade] = await Promise.all([
+      query<{ key: string; n: number }>(`SELECT type AS key, COUNT(*)::int AS n FROM questions GROUP BY type`),
+      query<{ key: string; n: number }>(
+        `SELECT subject AS key, COUNT(*)::int AS n FROM questions GROUP BY subject ORDER BY n DESC LIMIT 6`
+      ),
+      query<{ key: string; n: number }>(
+        `SELECT need AS key, COUNT(*)::int AS n FROM students, unnest(accessibility_needs) AS need
+         WHERE need <> 'none' GROUP BY need`
+      ),
+      query<{ key: string; n: number }>(`SELECT grade::text AS key, COUNT(*)::int AS n FROM students GROUP BY grade`),
+    ]);
+    const toMap = (rows: { key: string; n: number }[]) => Object.fromEntries(rows.map((x) => [x.key, x.n]));
+    return {
+      ...counts,
+      questionsByType: toMap(byType.rows),
+      questionsBySubject: toMap(bySubject.rows),
+      studentsByNeed: toMap(byNeed.rows),
+      studentsByGrade: toMap(byGrade.rows),
+    };
   });
 
   // ---------- teachers ----------
@@ -266,6 +293,42 @@ export default async function adminManageRoutes(fastify: FastifyInstance) {
     });
     reply.code(201);
     return { id, name, pin };
+  });
+
+  // Many students at once (one name per line in the panel). Every PIN is shown once.
+  fastify.post('/admin/students/bulk', async (request, reply) => {
+    const body = StudentBulk.safeParse(request.body);
+    if (!body.success) return bad(reply, firstIssue(body.error));
+    const { grade, language } = body.data;
+    const classIds = [...new Set(body.data.classIds)];
+    const problem = await checkClasses(classIds, grade);
+    if (problem) return bad(reply, problem);
+
+    const created = await transaction(async (client) => {
+      const out: { id: string; name: string; pin: string }[] = [];
+      for (const name of body.data.names) {
+        const pin = generatePin();
+        const user = await client.query<{ id: string }>(
+          `INSERT INTO users (email, password_hash, name, role) VALUES ($1, $2, $3, 'student') RETURNING id`,
+          [`student-${randomUUID()}@students.samapatra.invalid`, await hashSecret(pin), name]
+        );
+        const student = await client.query<{ id: string }>(
+          `INSERT INTO students (user_id, grade, language, accessibility_needs) VALUES ($1, $2, $3, $4) RETURNING id`,
+          [user.rows[0].id, grade, language, ['none']]
+        );
+        for (const classId of classIds) {
+          await client.query('INSERT INTO class_enrollments (class_id, student_id) VALUES ($1, $2)', [
+            classId,
+            student.rows[0].id,
+          ]);
+        }
+        out.push({ id: student.rows[0].id, name, pin });
+      }
+      return out;
+    });
+    request.log.info({ adminId: request.user.sub, count: created.length }, 'Admin added students in bulk');
+    reply.code(201);
+    return { students: created };
   });
 
   fastify.put('/admin/students/:id', async (request, reply) => {

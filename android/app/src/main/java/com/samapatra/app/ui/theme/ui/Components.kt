@@ -22,6 +22,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
@@ -30,6 +31,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -41,6 +43,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -54,6 +59,46 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.dp
 
+/** Pill shape for buttons. */
+val PillShape = RoundedCornerShape(percent = 50)
+
+/**
+ * The soft sky gradient behind every screen. Off for high contrast and tinted backgrounds,
+ * so those students keep a flat, plain background.
+ */
+@Composable
+fun backdropModifier(): Modifier {
+    val settings = LocalStudentSettings.current
+    if (settings.highContrast || settings.tintedBackground) return Modifier
+    val bg = MaterialTheme.colorScheme.background
+    val dark = bg.luminance() < 0.5f
+    val top = if (dark) Color(0xFF1A2A6C) else Color(0xFFB7CBE3)
+    val middle = if (dark) Color(0xFF111833) else Color(0xFFDCE5F1)
+    return Modifier.background(Brush.verticalGradient(0f to top, 0.35f to middle, 0.7f to bg))
+}
+
+/** A frosted white card, like glass over the gradient. */
+@Composable
+fun GlassCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val settings = LocalStudentSettings.current
+    val plain = settings.highContrast
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(MaterialTheme.shapes.large)
+            .background(if (plain) colors.surface else colors.surface.copy(alpha = 0.86f))
+            .border(
+                width = if (plain) 2.dp else 1.dp,
+                color = if (plain) colors.outline else Color.White.copy(alpha = if (colors.background.luminance() < 0.5f) 0.08f else 0.7f),
+                shape = MaterialTheme.shapes.large,
+            )
+            .padding(22.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+        content = content,
+    )
+}
+
 /** Standard page: optional Back button, a heading, then your content. Scrolls for big text sizes. */
 @Composable
 fun ScreenFrame(
@@ -62,7 +107,7 @@ fun ScreenFrame(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     Box(
-        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+        modifier = Modifier.fillMaxSize().then(backdropModifier()).safeDrawingPadding(),
         contentAlignment = Alignment.TopCenter,
     ) {
         Column(
@@ -74,7 +119,13 @@ fun ScreenFrame(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             if (onBack != null) {
-                TextButton(onClick = onBack) { Text("Back") }
+                TextButton(
+                    onClick = onBack,
+                    shape = PillShape,
+                    modifier = Modifier
+                        .clip(PillShape)
+                        .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.7f)),
+                ) { Text("‹  Back", color = MaterialTheme.colorScheme.onSurface) }
             }
             Text(
                 text = title,
@@ -112,7 +163,7 @@ fun PrimaryButton(
         onClick = onClick,
         enabled = enabled && !loading,
         modifier = modifier.fillMaxWidth().heightIn(min = if (large) 72.dp else 56.dp),
-        shape = MaterialTheme.shapes.medium,
+        shape = PillShape,
     ) {
         if (loading) {
             CircularProgressIndicator(
@@ -165,6 +216,12 @@ fun Field(
             VisualTransformation.None
         },
         trailingIcon = trailing,
+        shape = MaterialTheme.shapes.small,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+            unfocusedBorderColor = MaterialTheme.colorScheme.outlineVariant,
+        ),
     )
 }
 
@@ -247,7 +304,8 @@ private fun PinKey(label: String, small: Boolean = false, onClick: () -> Unit) {
         modifier = Modifier
             .size(width = 88.dp, height = 72.dp)
             .clip(MaterialTheme.shapes.medium)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.85f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium)
             .clickable(role = Role.Button, onClick = onClick),
         contentAlignment = Alignment.Center,
     ) {
@@ -271,7 +329,7 @@ fun SecondaryButton(
         onClick = onClick,
         enabled = enabled,
         modifier = modifier.fillMaxWidth().heightIn(min = if (large) 72.dp else 56.dp),
-        shape = MaterialTheme.shapes.medium,
+        shape = PillShape,
     ) {
         Text(text)
     }

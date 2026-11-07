@@ -16,9 +16,9 @@ val Lexend = FontFamily(
 
 // Body text starts at 16sp and up, with generous line height for easier reading.
 val AppTypography = Typography(
-    displaySmall = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.SemiBold, fontSize = 40.sp, lineHeight = 48.sp),
-    headlineMedium = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.SemiBold, fontSize = 28.sp, lineHeight = 36.sp),
-    titleLarge = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 30.sp),
+    displaySmall = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.Normal, fontSize = 42.sp, lineHeight = 48.sp, letterSpacing = (-1.2).sp),
+    headlineMedium = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.Medium, fontSize = 30.sp, lineHeight = 38.sp, letterSpacing = (-0.6).sp),
+    titleLarge = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.Medium, fontSize = 23.sp, lineHeight = 30.sp, letterSpacing = (-0.3).sp),
     titleMedium = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.Medium, fontSize = 18.sp, lineHeight = 26.sp),
     bodyLarge = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.Normal, fontSize = 18.sp, lineHeight = 28.sp),
     bodyMedium = TextStyle(fontFamily = Lexend, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 24.sp),

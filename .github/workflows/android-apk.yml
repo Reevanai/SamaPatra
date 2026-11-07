@@ -63,3 +63,42 @@ jobs:
             --prerelease \
             --title "SamaPatra Android (latest build)" \
             --notes "Built from ${GITHUB_REF_NAME} at ${GITHUB_SHA::7}. Download the .apk on your Android phone and open it to install (allow installs from this source when asked)."
+
+      # Screenshots of the app running in an emulator, attached to the same release.
+      # Best effort: if the emulator misbehaves, the APK above is still published.
+      - name: Enable KVM for the emulator
+        continue-on-error: true
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+      - name: Take screenshots in an emulator
+        continue-on-error: true
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          disable-animations: true
+          working-directory: android
+          script: |
+            adb install -r app/build/outputs/apk/debug/app-debug.apk
+            adb shell am start -W -n com.samapatra.app/.MainActivity
+            sleep 12
+            adb exec-out screencap -p > ../screenshot-welcome-light.png
+            adb shell cmd uimode night yes
+            adb shell am force-stop com.samapatra.app
+            adb shell am start -W -n com.samapatra.app/.MainActivity
+            sleep 12
+            adb exec-out screencap -p > ../screenshot-welcome-dark.png
+
+      - name: Attach screenshots to the release
+        continue-on-error: true
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la screenshot-*.png
+          gh release upload android-latest screenshot-welcome-light.png screenshot-welcome-dark.png --clobber

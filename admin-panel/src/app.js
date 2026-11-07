@@ -31,6 +31,7 @@
     for (const [k, v] of Object.entries(attrs || {})) {
       if (v === undefined || v === null || v === false) continue;
       if (k === 'class') node.className = v;
+      else if (k === 'style') node.style.cssText = v; // set from script: allowed by the page's security policy
       else if (k.startsWith('on')) node.addEventListener(k.slice(2), v);
       else if (k === 'value') node.value = v;
       else if (v === true) node.setAttribute(k, '');
@@ -106,6 +107,8 @@
   function showView(id) {
     for (const v of VIEWS) $(`#${v}`).hidden = v !== id;
     $('#session').hidden = id !== 'app-view';
+    $('#open-palette').hidden = id !== 'app-view';
+    document.body.classList.toggle('in-app', id === 'app-view');
   }
 
   function setSession(newToken, expiresInSec) {
@@ -293,13 +296,49 @@
   }
 
   // ---------- tables ----------
+  /** Shimmering placeholder rows while a table loads (only the first time). */
   function showLoading(table) {
-    if (!table.querySelector('tbody')) table.replaceChildren(el('tbody', {}, el('tr', {}, el('td', { class: 'empty' }, 'Loading…'))));
+    if (table.querySelector('tbody')) return;
+    const widths = ['72%', '48%', '60%', '35%', '55%'];
+    table.replaceChildren(el('tbody', {}, widths.map((w, i) => el('tr', { class: 'skeleton' },
+      [0, 1, 2, 3].map((c) => el('td', {}, el('span', { style: `--w:${c === 0 ? w : widths[(i + c) % 5]}` })))))));
   }
 
-  function renderTable(table, columns, rows, emptyText) {
+  /** Initials in a coloured circle, the colour chosen from the name. */
+  const AVATAR_COLORS = ['#2557ff', '#f0418c', '#22b35e', '#ff8a1f', '#8b5cf6', '#0ea5e9', '#e11d48'];
+  function avatarName(name) {
+    const initials = String(name).trim().split(/\s+/).slice(0, 2).map((w) => w[0] || '').join('').toUpperCase();
+    let h = 0;
+    for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+    return el('span', {}, el('span', { class: 'avatar', style: `--c:${AVATAR_COLORS[h % AVATAR_COLORS.length]}`, 'aria-hidden': 'true' }, initials), name);
+  }
+
+  /**
+   * columns: [{label, render, class, sort}] — `sort(row)` makes the column sortable.
+   * sortState: {key, dir} shared object; onSort() re-renders.
+   */
+  function renderTable(table, columns, rows, emptyText, sortState, onSort) {
+    const head = columns.map((c) => {
+      if (!c.sort || !sortState) return el('th', { class: c.class }, c.label);
+      const active = sortState.key === c.label;
+      return el('th', {
+        class: `${c.class || ''} sortable`, tabindex: 0, role: 'columnheader',
+        'aria-sort': active ? (sortState.dir > 0 ? 'ascending' : 'descending') : 'none',
+        onclick: () => { sortState.dir = active ? -sortState.dir : 1; sortState.key = c.label; onSort(); },
+        onkeydown: (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.target.click(); } },
+      }, c.label);
+    });
+    if (sortState && sortState.key) {
+      const col = columns.find((c) => c.label === sortState.key && typeof c.sort === 'function');
+      if (col) {
+        rows = [...rows].sort((a, b) => {
+          const x = col.sort(a), y = col.sort(b);
+          return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * sortState.dir;
+        });
+      }
+    }
     table.replaceChildren(
-      el('thead', {}, el('tr', {}, columns.map((c) => el('th', { class: c.class }, c.label)))),
+      el('thead', {}, el('tr', {}, head)),
       el('tbody', {}, rows.length
         ? rows.map((row) => el('tr', {}, columns.map((c) => el('td', { class: c.class, 'data-label': c.label }, c.render(row)))))
         : el('tr', {}, el('td', { colspan: columns.length, class: 'empty' }, emptyText)))
@@ -309,9 +348,49 @@
   const actionBtn = (label, onclick, cls = 'ghost small') => el('button', { type: 'button', class: cls, onclick }, label);
 
   // ---------- overview ----------
+  function greeting() {
+    const h = new Date().getHours();
+    return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+  }
+
   async function loadOverview() {
+    $('#hero-greeting').textContent = greeting();
+    $('#hero-date').textContent = new Date().toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
     const [s, ai] = await Promise.all([api('/admin/overview'), api('/admin/ai-settings')]);
     const aiReady = Boolean(ai[ai.pdfProvider]?.apiKey && ai[ai.textProvider]?.apiKey);
+
+    // Question bank: funnel of question types
+    const types = QUESTION_TYPES.map(([key, label]) => [label, (s.questionsByType || {})[key] || 0]);
+    const maxType = Math.max(1, ...types.map(([, n]) => n));
+    const topType = types.reduce((best, t) => (t[1] > best[1] ? t : best), types[0]);
+    $('#chart-types').replaceChildren(...(s.questions === 0
+      ? [el('div', { class: 'chart-empty' }, 'No questions yet. ', el('button', { type: 'button', class: 'link', onclick: () => switchTab('questions') }, 'Import a paper'))]
+      : types.map(([label, n], i) => el('div', { class: `funnel-col${n && label === topType[0] ? ' top' : ''}` },
+          el('span', { class: 'funnel-label' }, label),
+          el('span', { class: 'funnel-n' }, n),
+          el('div', { class: 'funnel-track' }, el('div', { class: 'funnel-bar', style: `height:${Math.max(4, (n / maxType) * 100)}%; animation-delay:${i * 70}ms` }))))));
+
+    // Students: big number and grade stripes
+    $('#big-students').textContent = s.students.toLocaleString();
+    const grades = [['Grade 9', (s.studentsByGrade || {})['9'] || 0, 'var(--blue)'], ['Grade 10', (s.studentsByGrade || {})['10'] || 0, 'var(--pink)'],
+      ['In a class', null, 'var(--green)']];
+    const total = Math.max(1, s.students);
+    $('#chart-grades').replaceChildren(...grades.filter(([, n]) => n !== null).map(([label, n, c]) => el('div', { class: 'striped-row' },
+      el('header', {}, el('span', {}, label), el('span', {}, `${n} · ${Math.round((n / total) * 100)}%`)),
+      el('div', { class: 'stripe' }, el('span', { style: `width:${(n / total) * 100}%; --c:${c}` })))),
+      el('div', { class: 'striped-row' }, el('header', {}, el('span', {}, 'Teachers'), el('span', {}, s.teachers)),
+        el('div', { class: 'stripe' }, el('span', { style: `width:${Math.min(100, s.teachers * 10)}%; --c:var(--orange)` }))));
+
+    // Supports in use: dot matrix
+    const needs = NEEDS.filter(([v]) => v !== 'none').map(([v, label]) => [label, (s.studentsByNeed || {})[v] || 0]);
+    const maxNeed = Math.max(1, ...needs.map(([, n]) => n));
+    const scale = maxNeed > 10 ? 10 / maxNeed : 1;
+    $('#chart-needs').replaceChildren(...needs.map(([label, n]) => el('div', { class: `dots-col${n && n === maxNeed ? ' peak' : ''}`, title: `${label}: ${n}` },
+      el('span', { class: 'dot-label' }, label.split(' ')[0]),
+      el('span', { class: 'dot-n' }, n),
+      ...Array.from({ length: Math.max(1, Math.round(n * scale)) }, (_, i) => el('span', { class: 'dot', style: `animation-delay:${i * 40}ms;${n ? '' : 'opacity:.35'}` })))));
+
+    // Getting started
     const steps = [
       [aiReady, 'Add your AI keys', 'Needed for importing papers, translation and grading.', 'ai'],
       [s.teachers > 0, 'Add your teachers', 'Each gets a password to sign in to the app.', 'teachers'],
@@ -320,30 +399,76 @@
       [s.questions > 0, 'Fill the question bank', 'Import a past paper PDF, or add questions by hand.', 'questions'],
     ];
     const done = steps.filter(([ok]) => ok).length;
-    $('#checklist-card').hidden = done === steps.length;
+    $('#step-count').textContent = `${done} of ${steps.length}`;
     $('#checklist').replaceChildren(...steps.map(([ok, title, hint, tab]) =>
       el('li', { class: ok ? 'done' : '' },
         el('span', { class: 'tick', 'aria-hidden': 'true' }, ok ? '✓' : ''),
         el('span', { class: 'step-text' }, el('strong', {}, title), el('small', {}, ok ? 'Done' : hint)),
         ok ? null : el('button', { type: 'button', class: 'secondary small', onclick: () => switchTab(tab) }, 'Go'))));
-    const items = [
-      ['Teachers', s.teachers, 'teachers'], ['Classes', s.classes, 'classes'], ['Students', s.students, 'students'],
-      ['Questions', s.questions, 'questions'], ['Exam papers', s.papers, null],
-    ];
-    $('#stats').replaceChildren(...items.map(([label, n, tab]) =>
-      el(tab ? 'button' : 'div', { class: 'stat', type: tab ? 'button' : undefined, onclick: tab ? () => switchTab(tab) : undefined },
-        el('span', { class: 'stat-n' }, n), el('span', { class: 'stat-l' }, label))));
+    if (done === steps.length && prefs.get('sp_admin_celebrated') !== '1') {
+      prefs.set('sp_admin_celebrated', '1');
+      confetti();
+      toast('Everything is set up. Nice work!');
+    }
+
+    // AI card
+    const providerName = ai.pdfProvider === 'gemini' ? 'Gemini' : 'Sarvam';
+    if (!aiReady) {
+      $('#ai-big').textContent = 'Off';
+      $('#ai-text').textContent = 'Add your AI keys in AI settings to import papers and translate questions.';
+    } else {
+      try {
+        const est = await api('/ai/estimate?operation=pdf_import&pages=6');
+        $('#ai-big').textContent = `${est.seconds}s`;
+        $('#ai-text').textContent = `Typical time for ${providerName} to read a 6-page paper${est.basedOn ? `, learned from ${est.basedOn} imports` : ''}.`;
+      } catch {
+        $('#ai-big').textContent = 'On';
+        $('#ai-text').textContent = `${providerName} reads papers; ${ai.textProvider === 'gemini' ? 'Gemini' : 'Sarvam'} translates and grades.`;
+      }
+    }
+  }
+
+  // ---------- confetti (once, when setup is complete) ----------
+  function confetti() {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const canvas = $('#confetti');
+    const ctx = canvas.getContext('2d');
+    canvas.width = innerWidth * devicePixelRatio;
+    canvas.height = innerHeight * devicePixelRatio;
+    ctx.scale(devicePixelRatio, devicePixelRatio);
+    const colors = ['#2557ff', '#f0418c', '#22b35e', '#ff8a1f', '#111114', '#5b8cff'];
+    const bits = Array.from({ length: 160 }, () => ({
+      x: innerWidth / 2 + (Math.random() - 0.5) * 200, y: innerHeight * 0.35, vx: (Math.random() - 0.5) * 14, vy: -Math.random() * 14 - 4,
+      r: Math.random() * Math.PI, vr: (Math.random() - 0.5) * 0.4, w: 6 + Math.random() * 6, h: 8 + Math.random() * 8, c: colors[Math.floor(Math.random() * colors.length)],
+    }));
+    const start = performance.now();
+    (function frame(t) {
+      ctx.clearRect(0, 0, innerWidth, innerHeight);
+      for (const b of bits) {
+        b.vy += 0.35; b.vx *= 0.99; b.x += b.vx; b.y += b.vy; b.r += b.vr;
+        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.r); ctx.fillStyle = b.c; ctx.fillRect(-b.w / 2, -b.h / 2, b.w, b.h); ctx.restore();
+      }
+      if (t - start < 3500) requestAnimationFrame(frame);
+      else ctx.clearRect(0, 0, innerWidth, innerHeight);
+    })(start);
   }
 
   // ---------- teachers ----------
   async function loadTeachers() {
     showLoading($('#teachers-table'));
     cache.teachers = await api('/admin/teachers');
+    renderTeachers();
+  }
+
+  const teacherSort = { key: 'Name', dir: 1 };
+  function renderTeachers() {
+    const q = $('#teacher-search').value.trim().toLowerCase();
+    const rows = cache.teachers.filter((t) => !q || `${t.name} ${t.email}`.toLowerCase().includes(q));
     renderTable($('#teachers-table'), [
-      { label: 'Name', render: (t) => t.name },
-      { label: 'Email', render: (t) => t.email },
-      { label: 'Classes', class: 'num', render: (t) => t.class_count },
-      { label: 'Questions', class: 'num', render: (t) => t.question_count },
+      { label: 'Name', render: (t) => avatarName(t.name), sort: (t) => t.name },
+      { label: 'Email', render: (t) => t.email, sort: (t) => t.email },
+      { label: 'Classes', class: 'num', render: (t) => t.class_count, sort: (t) => t.class_count },
+      { label: 'Questions', class: 'num', render: (t) => t.question_count, sort: (t) => t.question_count },
       { label: '', class: 'actions-col', render: (t) => rowActions(
         actionBtn('Edit', () => editTeacher(t)),
         actionBtn('Reset password', () => resetTeacherPassword(t)),
@@ -351,7 +476,7 @@
           `${t.name} will no longer be able to sign in. Their classes are deleted (students stay). Their questions stay in the bank.`,
           'Delete', async () => { await api(`/admin/teachers/${t.id}`, { method: 'DELETE' }); toast('Teacher deleted.'); loadTeachers(); }), 'ghost small danger'),
       ) },
-    ], cache.teachers, 'No teachers yet. Add one to get started.');
+    ], rows, cache.teachers.length ? 'No teachers match.' : 'No teachers yet. Add one to get started.', teacherSort, renderTeachers);
   }
 
   function teacherFields(t = {}) {
@@ -390,16 +515,23 @@
     const [classes, teachers] = await Promise.all([api('/admin/classes'), api('/admin/teachers')]);
     cache.classes = classes;
     cache.teachers = teachers;
+    renderClasses();
+  }
+
+  const classSort = { key: 'Class', dir: 1 };
+  function renderClasses() {
+    const q = $('#class-search').value.trim().toLowerCase();
+    const classes = cache.classes.filter((c) => !q || `${c.name} ${c.subject} ${c.teacher_name} ${c.join_code}`.toLowerCase().includes(q));
     renderTable($('#classes-table'), [
-      { label: 'Class', render: (c) => c.name },
-      { label: 'Grade', class: 'num', render: (c) => c.grade },
-      { label: 'Subject', render: (c) => c.subject },
-      { label: 'Teacher', render: (c) => c.teacher_name },
+      { label: 'Class', render: (c) => c.name, sort: (c) => c.name },
+      { label: 'Grade', class: 'num', render: (c) => c.grade, sort: (c) => c.grade },
+      { label: 'Subject', render: (c) => c.subject, sort: (c) => c.subject },
+      { label: 'Teacher', render: (c) => c.teacher_name, sort: (c) => c.teacher_name },
       { label: 'Class code', render: (c) => c.join_code
         ? el('span', { class: 'code-cell' }, el('code', {}, c.join_code),
             el('button', { type: 'button', class: 'ghost tiny', title: 'Copy class code', onclick: () => copy(c.join_code) }, 'Copy'))
         : '—' },
-      { label: 'Students', class: 'num', render: (c) => c.student_count },
+      { label: 'Students', class: 'num', render: (c) => c.student_count, sort: (c) => c.student_count },
       { label: '', class: 'actions-col', render: (c) => rowActions(
         actionBtn('Students', () => { pendingClassFilter = c.id; switchTab('students'); }),
         actionBtn('Edit', () => editClass(c)),
@@ -407,7 +539,7 @@
           `“${c.name}” is deleted. Its ${c.student_count} students stay, but are removed from this class.`,
           'Delete', async () => { await api(`/admin/classes/${c.id}`, { method: 'DELETE' }); toast('Class deleted.'); loadClasses(); }), 'ghost small danger'),
       ) },
-    ], classes, 'No classes yet.');
+    ], classes, cache.classes.length ? 'No classes match.' : 'No classes yet.', classSort, renderClasses);
   }
 
   function classFields(c = {}) {
@@ -459,6 +591,7 @@
     renderStudents();
   }
 
+  const studentSort = { key: 'Name', dir: 1 };
   function renderStudents() {
     const q = $('#student-search').value.trim().toLowerCase();
     const classId = $('#student-class-filter').value;
@@ -467,8 +600,8 @@
     const lang = Object.fromEntries(LANGUAGES);
     const needs = Object.fromEntries(NEEDS);
     renderTable($('#students-table'), [
-      { label: 'Name', render: (s) => s.name },
-      { label: 'Grade', class: 'num', render: (s) => s.grade },
+      { label: 'Name', render: (s) => avatarName(s.name), sort: (s) => s.name },
+      { label: 'Grade', class: 'num', render: (s) => s.grade, sort: (s) => s.grade },
       { label: 'Language', render: (s) => lang[s.language] || s.language },
       { label: 'Supports', render: (s) => (s.accessibility_needs || []).filter((n) => n !== 'none').map((n) => needs[n] || n).join(', ') || '—' },
       { label: 'Classes', render: (s) => s.classes.map((c) => c.name).join(', ') || el('span', { class: 'muted' }, 'None') },
@@ -479,7 +612,7 @@
           `${s.name} and all their papers and answers are deleted. This cannot be undone.`,
           'Delete', async () => { await api(`/admin/students/${s.id}`, { method: 'DELETE' }); toast('Student deleted.'); loadStudents(); }), 'ghost small danger'),
       ) },
-    ], rows, cache.students.length ? 'No students match.' : 'No students yet.');
+    ], rows, cache.students.length ? 'No students match.' : 'No students yet.', studentSort, renderStudents);
   }
 
   function studentFields(s = {}) {
@@ -520,6 +653,7 @@
           r.pin);
       },
     });
+    linkGradeToClasses();
   });
 
   function editStudent(s) {
@@ -529,7 +663,7 @@
         await api(`/admin/students/${s.id}`, { method: 'PUT', body: studentBody(v) });
         $('#dialog').close(); toast('Saved.'); loadStudents();
       },
-    });
+    });    linkGradeToClasses();
   }
 
   function resetPin(s) {
@@ -553,27 +687,50 @@
     renderQuestions();
   }
 
+  const PAGE_SIZE = 25;
+  let qPage = 0;
+  const questionSort = { key: '', dir: 1 };
   function renderQuestions() {
     const q = $('#q-search').value.trim().toLowerCase();
     const rows = cache.questions.filter((x) => !q
       || String(x.content?.text || '').toLowerCase().includes(q)
       || String(x.chapter || '').toLowerCase().includes(q));
+    const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+    qPage = Math.min(qPage, pages - 1);
     $('#q-count').textContent = `${rows.length} of ${cache.questions.length} questions`;
+    // Sort the whole list first, then show one page of it
+    const sortCol = { Type: (x) => x.type, Grade: (x) => x.grade, Subject: (x) => x.subject, Chapter: (x) => x.chapter, Marks: (x) => Number(x.marks), Level: (x) => x.difficulty }[questionSort.key];
+    const sorted = sortCol ? [...rows].sort((a, b) => {
+      const p = sortCol(a), q2 = sortCol(b);
+      return (typeof p === 'number' ? p - q2 : String(p).localeCompare(String(q2), undefined, { numeric: true })) * questionSort.dir;
+    }) : rows;
+    const pageRows = sorted.slice(qPage * PAGE_SIZE, (qPage + 1) * PAGE_SIZE);
+    const pager = $('#q-pager');
+    pager.replaceChildren(...(rows.length > PAGE_SIZE ? [
+      el('span', {}, `Showing ${qPage * PAGE_SIZE + 1}–${Math.min(rows.length, (qPage + 1) * PAGE_SIZE)} of ${rows.length}`),
+      el('div', { class: 'actions' },
+        el('button', { type: 'button', class: 'ghost small', disabled: qPage === 0, onclick: () => { qPage -= 1; renderQuestions(); } }, '← Previous'),
+        el('span', {}, `Page ${qPage + 1} of ${pages}`),
+        el('button', { type: 'button', class: 'ghost small', disabled: qPage >= pages - 1, onclick: () => { qPage += 1; renderQuestions(); } }, 'Next →')),
+    ] : []));
     const types = Object.fromEntries(QUESTION_TYPES);
     renderTable($('#questions-table'), [
       { label: 'Question', class: 'wide-col', render: (x) => el('span', { class: 'clamp' }, x.content?.text || '') },
-      { label: 'Type', render: (x) => types[x.type] || x.type },
-      { label: 'Grade', class: 'num', render: (x) => x.grade },
-      { label: 'Subject', render: (x) => x.subject },
-      { label: 'Chapter', render: (x) => x.chapter },
-      { label: 'Marks', class: 'num', render: (x) => Number(x.marks) },
-      { label: 'Level', class: 'num', render: (x) => x.difficulty },
+      { label: 'Type', render: (x) => types[x.type] || x.type, sort: true },
+      { label: 'Grade', class: 'num', render: (x) => x.grade, sort: true },
+      { label: 'Subject', render: (x) => x.subject, sort: true },
+      { label: 'Chapter', render: (x) => x.chapter, sort: true },
+      { label: 'Marks', class: 'num', render: (x) => Number(x.marks), sort: true },
+      { label: 'Level', class: 'num', render: (x) => x.difficulty, sort: true },
       { label: '', class: 'actions-col', render: (x) => rowActions(
         actionBtn('Edit', () => editQuestion(x)),
         actionBtn('Delete', () => confirmDanger('Delete question?', 'It is removed from the question bank.', 'Delete',
           async () => { await api(`/questions/${x.id}`, { method: 'DELETE' }); toast('Question deleted.'); loadQuestions(); }), 'ghost small danger'),
       ) },
-    ], rows, 'No questions yet. Add one, or import a question paper PDF.');
+    ], pageRows, rows.length || !cache.questions.length ? 'No questions yet. Add one, or import a question paper PDF.' : 'No questions match.',
+      // Sorting is done above across all pages, so the table only records the choice
+      { get key() { return questionSort.key; }, set key(v) { questionSort.key = v; }, get dir() { return questionSort.dir; }, set dir(v) { questionSort.dir = v; } },
+      () => { qPage = 0; renderQuestions(); });
   }
 
   function questionFields(x = {}) {
@@ -730,13 +887,14 @@
     });
   });
 
+  /** Review step: tick which questions to keep, and open any of them to fix the text or answer first. */
   function reviewImport(result, paperName) {
-    const questions = result.questions || [];
+    const questions = (result.questions || []).map((q) => JSON.parse(JSON.stringify(q))); // editable copies
     openDialog({
       title: `Found ${questions.length} questions`,
       okLabel: 'Save selected to the bank',
       onSubmit: async () => {
-        const chosen = $$('#dialog-body input[data-q]:checked').map((i) => questions[Number(i.dataset.q)]);
+        const chosen = $$('#dialog-body input[data-q]').filter((i) => i.checked).map((i) => questions[Number(i.dataset.q)]);
         if (!chosen.length) throw new Error('Select at least one question.');
         const name = $('#dialog-body #import-name').value.trim() || paperName;
         await api('/questions/bulk-import', { method: 'POST', body: { paperName: name, questions: chosen } });
@@ -748,19 +906,38 @@
     const body = $('#dialog-body');
     for (const w of result.warnings || []) body.append(el('p', { class: 'warning' }, w));
     body.append(el('label', {}, 'Paper name', el('input', { id: 'import-name', value: paperName })));
-    body.append(el('div', { class: 'import-list' }, questions.map((q, i) =>
-      el('label', { class: 'import-item' },
-        el('input', { type: 'checkbox', checked: true, 'data-q': i }),
-        el('span', {},
-          el('strong', {}, `Q${q.metadata?.questionNumber || i + 1} · ${q.type.replace('_', ' ')} · ${q.marks} marks · ${q.chapter}`),
-          q.metadata?.needsFigure ? el('em', { class: 'muted' }, ' (has a figure)') : null,
-          el('span', { class: 'clamp' }, q.content.text))))));
+    body.append(el('p', { class: 'muted small-text' }, 'Tap a question to fix its text or answer before saving.'));
+    const describe = (q, i) => `Q${q.metadata?.questionNumber || i + 1} · ${q.type.replace('_', ' ')} · ${q.marks} marks · ${q.chapter}`;
+    body.append(el('div', { class: 'import-list' }, questions.map((q, i) => {
+      const textEl = el('span', { class: 'clamp' }, q.content.text);
+      const objective = q.type === 'mcq' || q.type === 'assertion_reason';
+      return el('details', { class: 'import-item' },
+        el('summary', {},
+          el('input', { type: 'checkbox', checked: true, 'data-q': i, 'aria-label': `Keep question ${i + 1}`, onclick: (e) => e.stopPropagation() }),
+          el('span', { class: 'summary-text' },
+            el('strong', {}, describe(q, i)),
+            q.metadata?.needsFigure ? el('em', { class: 'muted' }, 'Has a figure') : null,
+            textEl),
+          el('span', { class: 'edit-hint' }, 'Edit')),
+        el('div', { class: 'edit-area' },
+          el('label', {}, 'Question', el('textarea', { rows: 4, oninput: (e) => { q.content.text = e.target.value; textEl.textContent = e.target.value; } }, q.content.text)),
+          objective ? el('label', {}, 'Options (one per line)', el('textarea', { rows: 4,
+            oninput: (e) => { q.content.options = e.target.value.split('\n').map((o) => o.trim()).filter(Boolean); } }, (q.content.options || []).join('\n'))) : null,
+          objective ? el('label', {}, 'Correct option letter', el('input', { value: q.content.correct_answer || '', maxlength: 1,
+            oninput: (e) => {
+              const v = e.target.value.trim().toUpperCase();
+              if (v) { q.content.correct_answer = v; q.metadata.answerSource = 'document'; q.metadata.answerVerified = true; }
+              else delete q.content.correct_answer;
+            } })) : null,
+          el('label', {}, 'Marks', el('input', { type: 'number', min: 0.5, step: 0.5, value: q.marks,
+            oninput: (e) => { const m = Number(e.target.value); if (m > 0) q.marks = m; } }))));
+    })));
   }
 
   let qTimer;
   $('#q-grade').addEventListener('change', () => loadQuestions().catch((e) => toast(e.message)));
   $('#q-subject').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(() => loadQuestions().catch((e) => toast(e.message)), 400); });
-  $('#q-search').addEventListener('input', renderQuestions);
+  $('#q-search').addEventListener('input', () => { qPage = 0; renderQuestions(); });
 
   // ---------- AI settings ----------
   function describeSource(info) {
@@ -983,6 +1160,178 @@
   window.addEventListener('beforeunload', (event) => {
     if (token && currentTab === 'ai' && Object.keys(aiPending()).length) event.preventDefault();
   });
+
+  /** In student forms: ticking a class sets the grade to that class's grade, so they can't disagree. */
+  function linkGradeToClasses() {
+    const group = $('#f-classIds');
+    const grade = $('#f-grade');
+    if (!group || !grade) return;
+    group.addEventListener('change', (e) => {
+      if (!e.target.checked) return;
+      const cls = cache.classes.find((c) => c.id === e.target.value);
+      if (!cls) return;
+      grade.value = String(cls.grade);
+      // Untick classes of another grade
+      $$('input', group).forEach((i) => {
+        const other = cache.classes.find((c) => c.id === i.value);
+        if (i.checked && other && other.grade !== cls.grade) i.checked = false;
+      });
+    });
+  }
+
+  // ---------- add many students + printable PIN slips ----------
+  $('#add-students-bulk').addEventListener('click', async () => {
+    if (!cache.classes.length) cache.classes = await api('/admin/classes');
+    const preset = $('#student-class-filter').value;
+    const cls = cache.classes.find((c) => c.id === preset);
+    openDialog({
+      title: 'Add many students',
+      intro: 'Paste or type one name per line. Everyone gets their own PIN, and you can print slips to hand out.',
+      okLabel: 'Add students',
+      fields: [
+        { name: 'names', label: 'Names (one per line)', type: 'textarea', rows: 8, required: true, placeholder: 'Ravi Kumar\nAnanya Rao\n…' },
+        { name: 'grade', label: 'Grade', type: 'select', options: [['9', 'Grade 9'], ['10', 'Grade 10']], value: cls ? cls.grade : 10 },
+        { name: 'language', label: 'Language', type: 'select', options: LANGUAGES, value: 'en' },
+        { name: 'classIds', label: 'Classes (same grade only)', type: 'multi',
+          options: cache.classes.map((c) => [c.id, `${c.name} · ${c.subject} · Grade ${c.grade}`]), value: cls ? [cls.id] : [],
+          empty: 'No classes yet. Add one in the Classes tab.' },
+      ],
+      onSubmit: async (v) => {
+        const names = [...new Set(v.names.split('\n').map((n) => n.trim()).filter((n) => n.length >= 2))];
+        if (!names.length) throw new Error('Type at least one name (2 letters or more).');
+        if (names.length > 200) throw new Error('Add up to 200 students at a time.');
+        const r = await api('/admin/students/bulk', { method: 'POST', body: { names, grade: Number(v.grade), language: v.language, classIds: v.classIds } });
+        loadStudents();
+        const classes = cache.classes.filter((c) => v.classIds.includes(c.id));
+        showPinList(r.students, classes);
+      },
+    });
+    linkGradeToClasses();
+  });
+
+  function showPinList(students, classes) {
+    const codes = classes.map((c) => `${c.name}: ${c.join_code}`).join(', ');
+    openDialog({ title: `${students.length} students added`, intro: `Each PIN is shown only once. Print the slips or copy the list now.${codes ? ` Class code: ${codes}.` : ''}` });
+    const body = $('#dialog-body');
+    body.append(el('div', { class: 'table-wrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, el('th', {}, 'Name'), el('th', { class: 'num' }, 'PIN'))),
+      el('tbody', {}, students.map((st) => el('tr', {}, el('td', {}, st.name), el('td', { class: 'num' }, el('code', {}, st.pin))))))));
+    const text = students.map((st) => `${st.name}\t${st.pin}`).join('\n');
+    body.append(el('div', { class: 'actions', style: 'margin-top:14px' },
+      el('button', { type: 'button', onclick: () => printSlips(students, classes) }, 'Print PIN slips'),
+      el('button', { type: 'button', class: 'secondary', onclick: () => copy(`${codes ? `Class code ${codes}\n` : ''}${text}`) }, 'Copy list')));
+  }
+
+  function printSlips(students, classes) {
+    const codes = classes.map((c) => c.join_code).join(' / ') || '—';
+    const className = classes.map((c) => c.name).join(', ');
+    $('#print-sheet').replaceChildren(
+      el('h1', {}, 'SamaPatra sign-in slips'),
+      el('p', { class: 'sheet-note' }, `${className || 'Students'} · Cut along the dashed lines and give each student their slip.`),
+      el('div', { class: 'slips' }, students.map((st) => el('div', { class: 'slip' },
+        el('div', { class: 'who' }, st.name),
+        el('div', { class: 'row' }, el('span', {}, 'Class code'), el('span', { class: 'big' }, codes)),
+        el('div', { class: 'row' }, el('span', {}, 'PIN'), el('span', { class: 'big' }, st.pin)),
+        el('div', { class: 'tiny' }, 'Open the SamaPatra app → I am a student → type the class code → tap your name → enter your PIN.')))));
+    window.print();
+  }
+
+  // ---------- command palette (Ctrl+K) ----------
+  function paletteItems() {
+    const go = (tab) => () => switchTab(tab);
+    const items = [
+      ...[['overview', 'Overview'], ['teachers', 'Teachers'], ['classes', 'Classes'], ['students', 'Students'], ['questions', 'Questions'], ['ai', 'AI settings']]
+        .map(([tab, label]) => ({ label: `Go to ${label}`, kind: 'Page', run: go(tab) })),
+      { label: 'Add a teacher', kind: 'Action', run: () => { switchTab('teachers'); $('#add-teacher').click(); } },
+      { label: 'Add a class', kind: 'Action', run: () => { switchTab('classes'); setTimeout(() => $('#add-class').click(), 50); } },
+      { label: 'Add a student', kind: 'Action', run: () => { switchTab('students'); setTimeout(() => $('#add-student').click(), 50); } },
+      { label: 'Add many students', kind: 'Action', run: () => { switchTab('students'); setTimeout(() => $('#add-students-bulk').click(), 50); } },
+      { label: 'Import a question paper PDF', kind: 'Action', run: () => { switchTab('questions'); $('#import-pdf').click(); } },
+      { label: 'Add a question', kind: 'Action', run: () => { switchTab('questions'); $('#add-question').click(); } },
+      { label: 'Change admin password', kind: 'Action', run: () => $('#change-pass').click() },
+      { label: 'Switch theme (light / dark / auto)', kind: 'Action', run: () => $('#theme-toggle').click() },
+      { label: 'Sign out', kind: 'Action', run: () => signOut() },
+    ];
+    for (const t of cache.teachers) items.push({ label: t.name, kind: 'Teacher', run: () => { switchTab('teachers'); $('#teacher-search').value = t.name; renderTeachers(); } });
+    for (const c of cache.classes) items.push({ label: `${c.name} · ${c.subject}`, kind: `Class ${c.join_code || ''}`, run: () => { pendingClassFilter = c.id; switchTab('students'); } });
+    for (const st of cache.students) items.push({ label: st.name, kind: 'Student', run: () => { switchTab('students'); $('#student-search').value = st.name; renderStudents(); } });
+    return items;
+  }
+
+  let paletteSel = 0;
+  let paletteShown = [];
+  function renderPalette() {
+    const q = $('#palette-input').value.trim().toLowerCase();
+    const words = q.split(/\s+/).filter(Boolean);
+    paletteShown = paletteItems().filter((it) => words.every((w) => `${it.label} ${it.kind}`.toLowerCase().includes(w))).slice(0, 40);
+    paletteSel = Math.min(paletteSel, Math.max(0, paletteShown.length - 1));
+    $('#palette-list').replaceChildren(...(paletteShown.length
+      ? paletteShown.map((it, i) => el('li', { role: 'option', 'aria-selected': String(i === paletteSel), onclick: () => runPalette(i), onmousemove: () => { if (paletteSel !== i) { paletteSel = i; renderPalette(); } } },
+          el('span', {}, it.label), el('span', { class: 'kind' }, it.kind)))
+      : [el('li', { class: 'empty' }, 'Nothing found.')]));
+    const selected = $('#palette-list [aria-selected="true"]');
+    if (selected) selected.scrollIntoView({ block: 'nearest' });
+  }
+  function runPalette(i) {
+    const it = paletteShown[i];
+    if (!it) return;
+    $('#palette').close();
+    it.run();
+  }
+  async function openPalette(text = '') {
+    if (!token || $('#app-view').hidden) return;
+    if ($('#dialog').open) return;
+    $('#palette-input').value = text;
+    paletteSel = 0;
+    renderPalette();
+    $('#palette').showModal();
+    $('#palette-input').focus();
+    // Make names searchable even before their tabs were opened
+    const missing = [];
+    if (!cache.teachers.length) missing.push(api('/admin/teachers').then((r) => { cache.teachers = r; }));
+    if (!cache.classes.length) missing.push(api('/admin/classes').then((r) => { cache.classes = r; }));
+    if (!cache.students.length) missing.push(api('/admin/students').then((r) => { cache.students = r; }));
+    if (missing.length) { await Promise.allSettled(missing); if ($('#palette').open) renderPalette(); }
+  }
+  $('#palette-input').addEventListener('input', () => { paletteSel = 0; renderPalette(); });
+  $('#palette-input').addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown') { e.preventDefault(); paletteSel = Math.min(paletteShown.length - 1, paletteSel + 1); renderPalette(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); paletteSel = Math.max(0, paletteSel - 1); renderPalette(); }
+    else if (e.key === 'Enter') { e.preventDefault(); runPalette(paletteSel); }
+  });
+  $('#palette').addEventListener('click', (e) => { if (e.target === $('#palette')) $('#palette').close(); });
+  document.addEventListener('keydown', (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); openPalette(); }
+  });
+  $('#open-palette').addEventListener('click', () => openPalette());
+  $('#ask-bar').addEventListener('click', () => openPalette());
+  $$('[data-go]').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.go)));
+
+  // ---------- theme: auto → light → dark ----------
+  const THEME_ICONS = {
+    auto: '<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 3a9 9 0 0 0 0 18z" fill="currentColor"/></svg>',
+    light: '<svg class="ico" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
+    dark: '<svg class="ico" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>',
+  };
+  function applyTheme(mode) {
+    if (mode === 'auto') document.documentElement.removeAttribute('data-theme');
+    else document.documentElement.setAttribute('data-theme', mode);
+    const btn = $('#theme-toggle');
+    btn.innerHTML = THEME_ICONS[mode]; // fixed, trusted markup
+    const label = `Theme: ${mode === 'auto' ? 'matches your device' : mode}. Click to change.`;
+    btn.setAttribute('aria-label', label);
+    btn.title = label;
+  }
+  let themeMode = prefs.get('sp_admin_theme') || 'auto';
+  applyTheme(themeMode);
+  $('#theme-toggle').addEventListener('click', () => {
+    themeMode = { auto: 'light', light: 'dark', dark: 'auto' }[themeMode] || 'auto';
+    prefs.set('sp_admin_theme', themeMode);
+    applyTheme(themeMode);
+  });
+
+  $('#teacher-search').addEventListener('input', renderTeachers);
+  $('#class-search').addEventListener('input', renderClasses);
 
   // ---------- start ----------
   if (token && Date.now() < tokenExpiry) enterApp();
