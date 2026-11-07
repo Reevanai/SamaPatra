@@ -160,8 +160,9 @@ fun WelcomeScreen(onTeacher: () -> Unit, onStudent: () -> Unit, onAdmin: () -> U
 /** The logo: a paper tile with an equals sign. Sama means equal, patra means paper. */
 @Composable
 private fun Mark(progress: () -> Float, modifier: Modifier = Modifier) {
-    val tile = MaterialTheme.colorScheme.secondary
-    val bars = MaterialTheme.colorScheme.onSecondary
+    // Brand colours: always marigold yellow with ink bars, whatever the theme (matches the app icon)
+    val tile = Color(0xFFF4B13E)
+    val bars = Color(0xFF1E2A2B)
     Canvas(modifier.size(88.dp)) {
         drawRoundRect(color = tile, cornerRadius = CornerRadius(size.width * 0.26f))
         val barHeight = size.height * 0.1f
