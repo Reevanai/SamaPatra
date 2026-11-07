@@ -122,6 +122,21 @@ object SamaPatraApi {
         ApiClient.post("/classes/$classId/students/$studentId/reset-pin", JSONObject(), token)
             .map { it.getString("pin") }
 
+    /** How long reading a paper of this size will probably take. Pages are optional. */
+    suspend fun estimatePdfImport(token: String, pages: Int?, bytes: Int): ApiResult<AiEstimate> {
+        val query = buildString {
+            append("/ai/estimate?operation=pdf_import&bytes=").append(bytes)
+            if (pages != null && pages > 0) append("&pages=").append(pages)
+        }
+        return ApiClient.get(query, token).map { json ->
+            AiEstimate(
+                seconds = json.getInt("seconds"),
+                low = json.optInt("low", json.getInt("seconds")),
+                high = json.optInt("high", json.getInt("seconds")),
+            )
+        }
+    }
+
     suspend fun importPaperPdf(
         token: String,
         grade: Int,

@@ -629,27 +629,106 @@
     });
   }
 
-  $('#import-pdf').addEventListener('click', () => openDialog({
-    title: 'Import a question paper',
-    intro: 'The AI reads the PDF and drafts the questions. You check them before anything is saved. This can take a minute or two.',
-    okLabel: 'Read PDF',
-    fields: [
-      { name: 'grade', label: 'Grade', type: 'select', options: [['9', 'Grade 9'], ['10', 'Grade 10']], value: 10 },
-      { name: 'subject', label: 'Subject', required: true, value: $('#q-subject').value.trim(), placeholder: 'e.g. Mathematics' },
-      { name: 'file', label: 'PDF file (under 4.5 MB)', type: 'file', accept: 'application/pdf', required: true },
-    ],
-    onSubmit: async (v) => {
-      if (!v.subject) throw new Error('Enter the subject.');
-      if (!v.file) throw new Error('Choose a PDF file.');
-      if (v.file.size > 4.4 * 1024 * 1024) throw new Error('That PDF is too big. It must be under 4.5 MB.');
-      const form = new FormData();
-      form.append('grade', v.grade); // text fields must come before the file
-      form.append('subject', v.subject);
-      form.append('file', v.file, v.file.name);
-      const result = await api('/questions/import-pdf', { method: 'POST', form });
-      reviewImport(result, v.file.name.replace(/\.pdf$/i, ''));
-    },
-  }));
+  // ---------- how long will the AI take? ----------
+  const fmtSeconds = (sec) => {
+    sec = Math.max(0, Math.round(sec));
+    if (sec < 60) return `${sec} second${sec === 1 ? '' : 's'}`;
+    const m = Math.floor(sec / 60);
+    const r = sec % 60;
+    return r ? `${m} min ${r} s` : `${m} minute${m === 1 ? '' : 's'}`;
+  };
+
+  // Estimated from the file size (the server learns seconds-per-MB from past imports).
+  // Counting pages in the browser is unreliable, so the panel doesn't try.
+  async function fetchEstimate(file) {
+    const params = new URLSearchParams({ operation: 'pdf_import', bytes: String(file.size) });
+    return api(`/ai/estimate?${params}`);
+  }
+
+  /** Shows a progress bar that counts down to the estimate. Returns a function that stops it. */
+  function startCountdown(container, estimate) {
+    const bar = el('div', { class: 'progress', role: 'progressbar', 'aria-valuemin': 0, 'aria-valuemax': 100 }, el('div', { class: 'progress-fill' }));
+    const label = el('p', { class: 'progress-label', 'aria-live': 'polite' });
+    const box = el('div', { class: 'progress-box' }, bar, label);
+    container.append(box);
+    const started = Date.now();
+    const total = estimate ? estimate.seconds : null;
+    const update = () => {
+      const elapsed = (Date.now() - started) / 1000;
+      if (!total) {
+        bar.classList.add('indeterminate');
+        label.textContent = `Reading… ${fmtSeconds(elapsed)} so far`;
+        return;
+      }
+      // Fills to 95% at the estimate, then creeps on slowly so it never looks stuck
+      const fraction = elapsed <= total ? 0.95 * (elapsed / total) : 0.95 + 0.04 * (1 - Math.exp(-(elapsed - total) / total));
+      bar.firstChild.style.width = `${(fraction * 100).toFixed(1)}%`;
+      bar.setAttribute('aria-valuenow', String(Math.round(fraction * 100)));
+      const left = total - elapsed;
+      label.textContent = left > 3
+        ? `About ${fmtSeconds(left)} left`
+        : left > -10 ? 'Almost done…'
+        : `Taking a little longer than usual (${fmtSeconds(elapsed)} so far)…`;
+    };
+    update();
+    const timer = setInterval(update, 500);
+    return () => { clearInterval(timer); box.remove(); };
+  }
+
+  $('#import-pdf').addEventListener('click', () => {
+    let estimate = null;
+    openDialog({
+      title: 'Import a question paper',
+      intro: 'The AI reads the PDF and drafts the questions. You check them before anything is saved.',
+      okLabel: 'Read PDF',
+      fields: [
+        { name: 'grade', label: 'Grade', type: 'select', options: [['9', 'Grade 9'], ['10', 'Grade 10']], value: 10 },
+        { name: 'subject', label: 'Subject', required: true, value: $('#q-subject').value.trim(), placeholder: 'e.g. Mathematics' },
+        { name: 'file', label: 'PDF file (under 4.5 MB)', type: 'file', accept: 'application/pdf', required: true },
+      ],
+      onSubmit: async (v) => {
+        if (!v.subject) throw new Error('Enter the subject.');
+        if (!v.file) throw new Error('Choose a PDF file.');
+        if (v.file.size > 4.4 * 1024 * 1024) throw new Error('That PDF is too big. It must be under 4.5 MB.');
+        const form = new FormData();
+        form.append('grade', v.grade); // text fields must come before the file
+        form.append('subject', v.subject);
+        form.append('file', v.file, v.file.name);
+        $('#dialog-cancel').disabled = true;
+        const stop = startCountdown($('#dialog-body'), estimate);
+        try {
+          const result = await api('/questions/import-pdf', { method: 'POST', form });
+          stop();
+          reviewImport(result, v.file.name.replace(/\.pdf$/i, ''));
+          if (result.timing) toast(`The AI read the paper in ${fmtSeconds(result.timing.seconds)}.`);
+        } catch (error) {
+          stop();
+          throw error;
+        } finally {
+          $('#dialog-cancel').disabled = false;
+        }
+      },
+    });
+
+    // As soon as a file is chosen, say how long it will probably take
+    const hint = el('p', { class: 'estimate-hint', 'aria-live': 'polite' });
+    $('#f-file').closest('label').after(hint);
+    $('#f-file').addEventListener('change', async (event) => {
+      const file = event.target.files[0];
+      estimate = null;
+      hint.textContent = '';
+      if (!file) return;
+      if (file.size > 4.4 * 1024 * 1024) { hint.textContent = 'That PDF is too big. It must be under 4.5 MB.'; return; }
+      hint.textContent = 'Working out how long this will take…';
+      try {
+        estimate = await fetchEstimate(file);
+        const range = estimate.high - estimate.low >= 10 ? ` (usually ${fmtSeconds(estimate.low)} to ${fmtSeconds(estimate.high)})` : '';
+        hint.textContent = `The AI will take about ${fmtSeconds(estimate.seconds)}${range}.`;
+      } catch {
+        hint.textContent = 'The AI usually takes a minute or two.';
+      }
+    });
+  });
 
   function reviewImport(result, paperName) {
     const questions = result.questions || [];

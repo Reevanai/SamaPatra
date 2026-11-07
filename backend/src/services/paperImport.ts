@@ -1,4 +1,6 @@
+import { getDocumentProxy } from 'unpdf';
 import { getPdfProvider } from './ai/providers.js';
+import { recordTiming } from './aiTiming.js';
 
 const TYPES = ['mcq', 'short_answer', 'long_answer', 'assertion_reason', 'case_study'] as const;
 type QuestionType = (typeof TYPES)[number];
@@ -30,6 +32,8 @@ export interface ImportResult {
   questions: ImportedQuestion[];
   summary: { count: number; totalMarks: number; byType: Record<string, number> };
   warnings: string[];
+  /** How long the AI took, and the paper's size (helps the apps estimate the next wait). */
+  timing?: { seconds: number; pages: number | null };
 }
 
 // No enum values here on purpose: the rules are in the prompt and checked in code below.
@@ -230,12 +234,39 @@ export async function importPaperFromPdf(
   grade: number,
   subject: string
 ): Promise<ImportResult> {
-  const { provider } = await getPdfProvider();
-  const raw = await provider.generateStructuredFromPdf<unknown>(
-    pdf,
-    buildPrompt(grade, subject),
-    SCHEMA,
-    { systemPrompt: SYSTEM_PROMPT, temperature: 0.2 }
-  );
-  return normalize(raw, grade, subject);
+  const { name, provider } = await getPdfProvider();
+  const pages = await countPages(pdf);
+  const started = Date.now();
+  let ok = false;
+  try {
+    const raw = await provider.generateStructuredFromPdf<unknown>(
+      pdf,
+      buildPrompt(grade, subject),
+      SCHEMA,
+      { systemPrompt: SYSTEM_PROMPT, temperature: 0.2 }
+    );
+    ok = true;
+    const result = normalize(raw, grade, subject);
+    return { ...result, timing: { seconds: Math.round((Date.now() - started) / 1000), pages } };
+  } finally {
+    await recordTiming({
+      operation: 'pdf_import',
+      provider: name,
+      model: provider.modelName,
+      pages,
+      bytes: pdf.length,
+      seconds: (Date.now() - started) / 1000,
+      ok,
+    });
+  }
+}
+
+/** Number of pages, or null if the PDF can't be opened here (the AI may still read it). */
+export async function countPages(pdf: Buffer): Promise<number | null> {
+  try {
+    const doc = await getDocumentProxy(new Uint8Array(pdf)); // copies, so `pdf` stays usable
+    return doc.numPages;
+  } catch {
+    return null;
+  }
 }

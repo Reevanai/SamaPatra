@@ -113,6 +113,9 @@ data class ImportDraft(
     val totalMarks: Double,
 )
 
+/** How long the server expects an AI job to take, learned from past jobs. In seconds. */
+data class AiEstimate(val seconds: Int, val low: Int, val high: Int)
+
 data class NewStudent(val name: String, val pin: String)
 
 data class PaperListItem(

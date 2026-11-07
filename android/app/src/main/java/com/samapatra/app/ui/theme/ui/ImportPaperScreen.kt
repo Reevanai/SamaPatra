@@ -1,6 +1,7 @@
 package com.samapatra.app.ui
 
 import android.content.Context
+import android.graphics.pdf.PdfRenderer
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.activity.compose.BackHandler
@@ -18,13 +19,14 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -46,10 +48,13 @@ import com.samapatra.app.data.ImportDraft
 import com.samapatra.app.data.SamaPatraApi
 import com.samapatra.app.data.SessionStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.ByteArrayOutputStream
+import kotlin.math.exp
+import kotlin.math.roundToInt
 
 // The server (Vercel) accepts uploads up to 4.5 MB, including the form around the file
 private const val MAX_PDF_BYTES = 4 * 1024 * 1024
@@ -78,7 +83,8 @@ private fun startingReview(q: DraftQuestion) = Review(
 
 private sealed interface Stage {
     object Setup : Stage                           // choose subject, grade and the PDF
-    object Reading : Stage                         // the AI is reading the PDF
+    // the AI is reading the PDF; estimateSeconds is null until the server has answered
+    class Reading(val estimateSeconds: Int?, val startedAt: Long) : Stage
     class Reviewing(val draft: ImportDraft) : Stage // the teacher checks every question
     class Saved(val count: Int) : Stage            // done
 }
@@ -168,7 +174,7 @@ fun ImportPaperScreen(onBack: () -> Unit, onSignOut: () -> Unit) {
     fun readPaper(uri: Uri) {
         scope.launch {
             error = null
-            stage = Stage.Reading
+            stage = Stage.Reading(estimateSeconds = null, startedAt = System.currentTimeMillis())
 
             paperName = withContext(Dispatchers.IO) { fileDisplayName(context, uri) }
                 ?.removeSuffix(".pdf")
@@ -182,6 +188,14 @@ fun ImportPaperScreen(onBack: () -> Unit, onSignOut: () -> Unit) {
                 stage = Stage.Setup
                 return@launch
             }
+
+            // Ask how long this will probably take, so the wait shows a countdown, not just a spinner
+            val pages = withContext(Dispatchers.IO) { countPages(context, uri) }
+            val estimate = when (val e = SamaPatraApi.estimatePdfImport(session.token, pages, bytes.size)) {
+                is ApiResult.Ok -> e.value.seconds
+                is ApiResult.Failure -> null
+            }
+            stage = Stage.Reading(estimateSeconds = estimate, startedAt = System.currentTimeMillis())
 
             val grade = if (gradeIndex == 0) 9 else 10
             when (val result = SamaPatraApi.importPaperPdf(session.token, grade, subject.trim(), bytes)) {
@@ -260,7 +274,7 @@ fun ImportPaperScreen(onBack: () -> Unit, onSignOut: () -> Unit) {
                 onChoosePdf = { picker.launch(arrayOf("application/pdf")) },
             )
 
-            is Stage.Reading -> ReadingStep()
+            is Stage.Reading -> ReadingStep(current.estimateSeconds, current.startedAt)
 
             is Stage.Reviewing -> ReviewStep(
                 draft = current.draft,
@@ -338,15 +352,88 @@ private fun SetupStep(
 }
 
 @Composable
-private fun ReadingStep() {
-    CircularProgressIndicator(
-        modifier = Modifier.semantics { contentDescription = "Reading the paper" },
-    )
+private fun ReadingStep(estimateSeconds: Int?, startedAt: Long) {
+    // Ticks twice a second so the countdown moves
+    var now by remember { mutableLongStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(startedAt) {
+        while (true) {
+            now = System.currentTimeMillis()
+            delay(500)
+        }
+    }
+    val elapsed = ((now - startedAt) / 1000f).coerceAtLeast(0f)
+
+    if (estimateSeconds == null || estimateSeconds <= 0) {
+        LinearProgressIndicator(
+            modifier = Modifier
+                .fillMaxWidth()
+                .semantics { contentDescription = "Reading the paper" },
+        )
+        Text(
+            text = "The AI is reading your paper. This usually takes a minute or two. Please keep this screen open.",
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onBackground,
+        )
+        Text(
+            text = "${formatDuration(elapsed.roundToInt())} so far",
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        return
+    }
+
+    val total = estimateSeconds.toFloat()
+    // Fills to 95% at the estimate, then creeps on slowly so it never looks stuck
+    val fraction = if (elapsed <= total) {
+        0.95f * elapsed / total
+    } else {
+        0.95f + 0.04f * (1f - exp(-(elapsed - total) / total))
+    }
+    val left = total - elapsed
+    val status = when {
+        left > 3f -> "About ${formatDuration(left.roundToInt())} left"
+        left > -10f -> "Almost done…"
+        else -> "Taking a little longer than usual (${formatDuration(elapsed.roundToInt())} so far)…"
+    }
+
     Text(
-        text = "The AI is reading your paper. This takes one to two minutes. Please keep this screen open.",
+        text = "The AI is reading your paper. It usually needs about ${formatDuration(estimateSeconds)} for a paper like this. Please keep this screen open.",
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onBackground,
     )
+    LinearProgressIndicator(
+        progress = { fraction },
+        modifier = Modifier
+            .fillMaxWidth()
+            .semantics { contentDescription = "Reading the paper. $status" },
+    )
+    Text(
+        text = status,
+        style = MaterialTheme.typography.bodyMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+}
+
+/** "45 seconds", "1 min 20 s", "2 minutes". */
+private fun formatDuration(seconds: Int): String {
+    val s = seconds.coerceAtLeast(0)
+    if (s < 60) return if (s == 1) "1 second" else "$s seconds"
+    val m = s / 60
+    val r = s % 60
+    return when {
+        r != 0 -> "$m min $r s"
+        m == 1 -> "1 minute"
+        else -> "$m minutes"
+    }
+}
+
+/** Number of pages, using Android's own PDF reader. Null if the file can't be opened (for example, password-protected). */
+private fun countPages(context: Context, uri: Uri): Int? = try {
+    context.contentResolver.openFileDescriptor(uri, "r")?.use { fd ->
+        PdfRenderer(fd).use { it.pageCount }
+    }
+} catch (e: Exception) {
+    null
 }
 
 @Composable

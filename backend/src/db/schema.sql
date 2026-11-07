@@ -188,6 +188,20 @@ CREATE TABLE IF NOT EXISTS login_attempts (
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- How long slow AI jobs took, so the apps can estimate the next wait
+CREATE TABLE IF NOT EXISTS ai_timings (
+    id BIGSERIAL PRIMARY KEY,
+    operation VARCHAR(40) NOT NULL,
+    provider VARCHAR(20) NOT NULL,
+    model VARCHAR(100),
+    pages INTEGER,
+    bytes INTEGER,
+    seconds REAL NOT NULL,
+    ok BOOLEAN NOT NULL,
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ai_timings_lookup ON ai_timings (operation, provider, created_at DESC);
+
 -- Function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER
@@ -228,3 +242,4 @@ ALTER TABLE adaptive_test_results ENABLE ROW LEVEL SECURITY;
 ALTER TABLE ai_cache ENABLE ROW LEVEL SECURITY;
 ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE login_attempts ENABLE ROW LEVEL SECURITY;
+ALTER TABLE ai_timings ENABLE ROW LEVEL SECURITY;

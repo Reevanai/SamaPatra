@@ -232,3 +232,17 @@ input[type=file] { padding: 7px; }
 .checklist .step-text small { margin: 0; }
 .code-cell { display: inline-flex; align-items: center; gap: 6px; }
 button.tiny { padding: 2px 8px; font-size: 12px; font-weight: 500; }
+
+/* ---------- AI time estimates ---------- */
+.estimate-hint { margin: -6px 0 12px; font-size: 13px; color: var(--accent); font-weight: 500; }
+.estimate-hint:empty { display: none; }
+.progress-box { margin-top: 12px; }
+.progress { height: 10px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); overflow: hidden; }
+.progress-fill { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .5s linear; }
+.progress.indeterminate .progress-fill { width: 35%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(290%); } }
+.progress-label { margin: 6px 0 0; font-size: 14px; color: var(--muted); font-variant-numeric: tabular-nums; }
+@media (prefers-reduced-motion: reduce) {
+  .progress-fill { transition: none; }
+  .progress.indeterminate .progress-fill { animation: none; width: 100%; opacity: .4; }
+}

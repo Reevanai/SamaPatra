@@ -19,6 +19,7 @@ import classRoutes from './routes/classes.js';
 import bankRoutes from './routes/bank.js';
 import adminRoutes, { adminSettingsRoutes } from './routes/admin.js';
 import adminManageRoutes from './routes/adminManage.js';
+import aiEstimateRoutes from './routes/aiEstimate.js';
 
 /** Builds the API. Used by server.ts (normal server) and api/index.ts (Vercel). */
 export async function buildApp(): Promise<FastifyInstance> {
@@ -90,6 +91,7 @@ export async function buildApp(): Promise<FastifyInstance> {
         await teacherApp.register(rosterRoutes);
         await teacherApp.register(classPapersRoutes);
         await teacherApp.register(bankRoutes);
+      await teacherApp.register(aiEstimateRoutes);
       });
 
       // Admins only: API keys and AI settings
